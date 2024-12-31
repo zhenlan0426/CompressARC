@@ -1,13 +1,19 @@
+import json
+
 import numpy as np
 import torch
 
+import tensor_algebra
+
 
 class Task():
-    def __init__(self, problem, solution):
+    def __init__(self, task_name, problem, solution):
+        self.task_name = task_name
         self.n_train = len(problem['train'])
         self.n_test = len(problem['test'])
         self.n_examples = self.n_train + self.n_test
 
+        self.unprocessed_problem = problem
         self.collect_problem_shapes(problem)
         self.predict_solution_shapes(problem)
         self.construct_multitensor_system(problem)
@@ -37,7 +43,7 @@ class Task():
         for example_num in range(self.n_train):
             if tuple(self.shapes[example_num][0]) != tuple(self.shapes[example_num][1]):
                 self.in_out_same_size = False
-        for example_num in range(self.n_train+n_test-1):
+        for example_num in range(self.n_train+self.n_test-1):
             if tuple(self.shapes[example_num][0]) != tuple(self.shapes[example_num-1][0]):
                 self.all_in_same_size = False
         for example_num in range(self.n_train-1):
@@ -50,17 +56,25 @@ class Task():
             for example_num in range(self.n_examples-1):
                 self.shapes[example_num+1][1] = self.shapes[example_num][1]
         else:
+            max_n_x = 0
+            max_n_y = 0
+            for example_num in range(self.n_examples):
+                for in_out_mode in range(2):
+                    if example_num >= self.n_train and in_out_mode == 1:
+                        continue
+                    max_n_x = max(max_n_x, self.shapes[example_num][in_out_mode][0])
+                    max_n_y = max(max_n_y, self.shapes[example_num][in_out_mode][1])
             for example_num in range(self.n_train, self.n_examples):
-                self.shapes[example_num][1] = [30, 30]
+                self.shapes[example_num][1] = [max_n_x, max_n_y]
         
-    def construct_multitensor_system(self):
+    def construct_multitensor_system(self, problem):
         # figure out the size of the tensors we'll process in our neural network: colors, x, y
         self.n_x = 0
         self.n_y = 0
         for example_num in range(self.n_examples):
             self.n_x = max(self.n_x, self.shapes[example_num][0][0], self.shapes[example_num][1][0])
             self.n_y = max(self.n_y, self.shapes[example_num][0][1], self.shapes[example_num][1][1])
-        colors = {}
+        colors = set()
         for subsplit_name, n_examples in (('train', self.n_train), ('test', self.n_test)):
             for example_num in range(n_examples):
                 for mode in ('input', 'output'):
@@ -73,7 +87,7 @@ class Task():
         colors.add(0)  # we'll treat black differently than other colors, as it is often used as a background color
         self.colors = list(sorted(colors))
         self.n_colors = len(self.colors)-1  # don't count black
-        self.multitensor_system = MultiTensorSystem(self.n_examples, self.n_colors, self.n_x, self.n_y, self)
+        self.multitensor_system = tensor_algebra.MultiTensorSystem(self.n_examples, self.n_colors, self.n_x, self.n_y, self)
 
     def create_problem_tensor(self, problem):
         # load the data into a tensor self.problem (note: separate from problem!!) for crossentropy evaluation
@@ -86,13 +100,13 @@ class Task():
                         grid = np.zeros([self.n_colors+1] + self.shapes[new_example_num][1])  # color, x, y
                     else:
                         grid = problem[subsplit_name][example_num][mode]  # x, y
-                        grid = [[[1 if self.colors.index(color)==ref_color
+                        grid = [[[1 if self.colors.index(color)==ref_color else 0
                                   for color in row]
                                  for row in grid]
                                 for ref_color in range(self.n_colors+1)]  # color, x, y
                         grid = np.array(grid)  # color, x, y
                     mode_num = 0 if mode=='input' else 1
-                    self.problem[new_example_num,:,:grid.shape[0],:grid.shape[1],mode_num] = grid
+                    self.problem[new_example_num,:,:grid.shape[1],:grid.shape[2],mode_num] = grid
 
         self.problem = np.argmax(self.problem, axis=1)  # example, x, y, in/out. Black is included.
         self.problem = torch.from_numpy(self.problem).to(torch.get_default_device())  # example, x, y, in/out
@@ -100,16 +114,19 @@ class Task():
     def create_solution_tensor(self, solution):
         # load the data into a tensor self.solution (note: separate from solution!!) for crossentropy evaluation
         self.solution = np.zeros((self.n_test, self.n_colors+1, self.n_x, self.n_y))  # example, color, x, y
-        for example_num in range(n_test):
+        self.solution_tuple = ()
+        for example_num in range(self.n_test):
             grid = solution[example_num]  # x, y
-            grid = [[[1 if self.colors.index(color)==ref_color
+            self.solution_tuple = self.solution_tuple + tuple(tuple(row) for row in grid)
+            grid = [[[1 if self.colors.index(color)==ref_color else 0
                       for color in row]
                      for row in grid]
                     for ref_color in range(self.n_colors+1)]  # color, x, y
             grid = np.array(grid)  # color, x, y
-            self.solution[self.n_train+example_num,:,:grid.shape[0],:grid.shape[1]] = grid
+            self.solution[example_num,:,:grid.shape[1],:grid.shape[2]] = grid
         self.solution = np.argmax(self.solution, axis=1)  # example, x, y. Black is included.
         self.solution = torch.from_numpy(self.solution).to(torch.get_default_device())  # example, x, y
+        self.solution_hash = hash(self.solution_tuple)
 
     def compute_mask(self):
         # compute a mask to zero out activations and crossentropies
@@ -121,10 +138,10 @@ class Task():
                 y_mask = (np.arange(self.n_y) < self.shapes[example_num][mode_num][1])
                 mask = x_mask[:,None]*y_mask[None,:]
                 self.masks[example_num,:,:,mode_num] = mask
-        self.masks = torch.from_numpy(masks).to(torch.get_default_dtype()).to(torch.get_default_device())
+        self.masks = torch.from_numpy(self.masks).to(torch.get_default_dtype()).to(torch.get_default_device())
 
 
-def preprocess_tasks(split, task_nums):
+def preprocess_tasks(split, task_nums_or_task_names):
     """
     split: one of "training", "evaluation", and "test"
     """
@@ -136,13 +153,14 @@ def preprocess_tasks(split, task_nums):
     else:
         solutions = None
 
-    problem_names = list(problems.values())
+    task_names = list(problems.keys())
 
     tasks = []
-    for problem_name in problem_names:
-        problem = problems[problem_name]
-        solution = None if solutions is None elsesolutions[problem_name]
-        task = Task(problem, solution)
-        tasks.append(task)
+    for task_num, task_name in enumerate(task_names):
+        if task_num in task_nums_or_task_names or task_name in task_nums_or_task_names:
+            problem = problems[task_name]
+            solution = None if solutions is None else solutions[task_name]
+            task = Task(task_name, problem, solution)
+            tasks.append(task)
 
     return tasks

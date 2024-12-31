@@ -35,11 +35,11 @@ class MultiTensorSystem():
     
     def make_multitensor(self, default=None, index=-1):
         if index == -1:
-            return MultiTensor(self.make_empty_multitensor(0), self)
+            return MultiTensor(self.make_multitensor(default=default, index=0), self)
         elif index == 5:
             return default                #[]AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
         else:
-            return [self.make_empty_multitensor(default=default, index=index+1) for i in range(2)]
+            return [self.make_multitensor(default=default, index=index+1) for i in range(2)]
 
 
 class MultiTensor():
@@ -63,8 +63,8 @@ def multify(fn):
             if isinstance(arg, MultiTensor):
                 multi_mode = True
                 multitensor_system = arg.multitensor_system
-        for kwarg in kwargs:
-            if isinstance(arg, MultiTensor):
+        for kwarg in kwargs.values():
+            if isinstance(kwarg, MultiTensor):
                 multi_mode = True
                 multitensor_system = kwarg.multitensor_system
         if multi_mode:
@@ -76,14 +76,55 @@ def multify(fn):
                         new_args.append(arg[dims])
                     else:
                         new_args.append(arg)
-                new_kwargs = []
-                for kwarg in kwargs:
-                    if isinstance(kwarg, MultiTensor):
-                        new_kwargs.append(kwarg[dims])
+                new_kwargs = {}
+                for key, value in kwargs.items():
+                    if isinstance(value, MultiTensor):
+                        new_kwargs[key] = value[dims]
                     else:
-                        new_kwargs.append(kwarg)
+                        new_kwargs[key] = value
                 multitensor[dims] = fn(dims, *new_args, **new_kwargs)
             return multitensor
         else:
             return fn(None, *args, **kwargs)
     return multi_fn
+
+
+def multify(fn):
+    def multi_fn(*args, **kwargs):
+        multi_mode = False
+        multitensor_system = None
+        for arg in args:
+            if isinstance(arg, MultiTensor):
+                multi_mode = True
+                multitensor_system = arg.multitensor_system
+        for kwarg in kwargs.values():
+            if isinstance(kwarg, MultiTensor):
+                multi_mode = True
+                multitensor_system = kwarg.multitensor_system
+        if multi_mode:
+            return use_multitensor_system_to_multify(multitensor_system, fn)(*args, **kwargs)
+        else:
+            return fn(None, *args, **kwargs)
+    return multi_fn
+
+def use_multitensor_system_to_multify(multitensor_system, fn):
+    def multi_fn(*args, **kwargs):
+        multitensor = multitensor_system.make_multitensor()
+        for dims in multitensor_system:
+            new_args = []
+            for arg in args:
+                if isinstance(arg, MultiTensor):
+                    new_args.append(arg[dims])
+                else:
+                    new_args.append(arg)
+            new_kwargs = {}
+            for key, value in kwargs.items():
+                if isinstance(value, MultiTensor):
+                    new_kwargs[key] = value[dims]
+                else:
+                    new_kwargs[key] = value
+            multitensor[dims] = fn(dims, *new_args, **new_kwargs)
+        return multitensor
+    return multi_fn
+
+
