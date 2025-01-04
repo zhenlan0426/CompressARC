@@ -18,6 +18,17 @@ class MultiTensorSystem():
             return False
         return True
 
+    def kernel_dims_valid(self, dims):
+#        if dims[2] or not dims[3] or not dims[4]:  # kernels are always positional and non-directional
+#            return False
+        if dims[3] != dims[4]:  # kernel information is either 2 or 0 dimensional
+            return False
+        if dims[2]:  # kernels are always non-directional
+            return False
+        if sum(dims[1:]) == 0:  # examples aren't special
+            return False
+        return True
+
     def shape(self, dims, extra_dim=None):
         shape = []
         for dim, length in enumerate(self.dim_lengths):
@@ -32,6 +43,20 @@ class MultiTensorSystem():
             dims = [(i//2**j) % 2 for j in range(5)]
             if self.dims_valid(dims):
                 yield dims
+
+    def iterate_kernel_mode(self):
+        for i in range(32):
+            dims = [(i//2**j) % 2 for j in range(5)]
+            if self.kernel_dims_valid(dims):
+                yield dims
+
+    def iterate(self, kernel_mode=False):
+        if kernel_mode:
+            for item in self.iterate_kernel_mode():
+                yield item
+        else:
+            for item in self:
+                yield item
     
     def make_multitensor(self, default=None, index=-1):
         if index == -1:
@@ -90,7 +115,7 @@ def multify(fn):
 
 
 def multify(fn):
-    def multi_fn(*args, **kwargs):
+    def multi_fn(*args, kernel_mode=False, **kwargs):
         multi_mode = False
         multitensor_system = None
         for arg in args:
@@ -102,7 +127,10 @@ def multify(fn):
                 multi_mode = True
                 multitensor_system = kwarg.multitensor_system
         if multi_mode:
-            return use_multitensor_system_to_multify(multitensor_system, fn)(*args, **kwargs)
+            if kernel_mode:
+                return use_multitensor_system_to_kernel_multify(multitensor_system, fn)(*args, **kwargs)
+            else:
+                return use_multitensor_system_to_multify(multitensor_system, fn)(*args, **kwargs)
         else:
             return fn(None, *args, **kwargs)
     return multi_fn
@@ -127,4 +155,22 @@ def use_multitensor_system_to_multify(multitensor_system, fn):
         return multitensor
     return multi_fn
 
-
+def use_multitensor_system_to_kernel_multify(multitensor_system, fn):
+    def multi_fn(*args, **kwargs):
+        multitensor = multitensor_system.make_multitensor()
+        for dims in multitensor_system.iterate_kernel_mode():
+            new_args = []
+            for arg in args:
+                if isinstance(arg, MultiTensor):
+                    new_args.append(arg[dims])
+                else:
+                    new_args.append(arg)
+            new_kwargs = {}
+            for key, value in kwargs.items():
+                if isinstance(value, MultiTensor):
+                    new_kwargs[key] = value[dims]
+                else:
+                    new_kwargs[key] = value
+            multitensor[dims] = fn(dims, *new_args, **new_kwargs)
+        return multitensor
+    return multi_fn

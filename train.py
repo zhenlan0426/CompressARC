@@ -24,17 +24,18 @@ def mask_select_logprobs(mask, length):
 def take_step(task, model, optimizer, train_step, train_history_logger):
 
     optimizer.zero_grad()
-    logits, x_mask, y_mask, KL_amounts, KL_names = model.forward()
-#    print(''.join(['+' if x_mask[2,i,1]>0 else '-' for i in range(x_mask.shape[1])]))   ################
-#    print(''.join(['+' if y_mask[2,i,1]>0 else '-' for i in range(y_mask.shape[1])]))   ################
+    logits, x_mask, y_mask, KL_amounts, KL_names, kernel_KL_amounts, kernel_KL_names = model.forward()
     logits = torch.cat([torch.zeros_like(logits[:,:1,:,:]), logits], dim=1)  # add black
 
     total_KL = 0
+#    for KL_amount in KL_amounts + kernel_KL_amounts:                ############################
+#        total_KL = total_KL + torch.sum(KL_amount)
     for KL_amount in KL_amounts:
         total_KL = total_KL + torch.sum(KL_amount)
+    for KL_amount in kernel_KL_amounts:
+        total_KL = total_KL + 0.1*torch.sum(KL_amount)
 
     reconstruction_error = 0
-#    print(task.in_out_same_size, task.all_out_same_size, task.all_in_same_size)
     for example_num in range(task.n_examples):
         for in_out_mode in range(2):
             if example_num >= task.n_train and in_out_mode == 1:
@@ -66,11 +67,10 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
                     logprobs[x_offset].append(logprob)
             logprobs = torch.stack([torch.stack(logprobs_, dim=0) for logprobs_ in logprobs], dim=0)  # x, y
             if grid_size_uncertain:                       ####################################################################
-                coefficient = 0.1**max(0, 1-train_step/400)
+                coefficient = 0.1**max(0, 1-train_step/200)
             else:
                 coefficient = 1
             logprob = torch.logsumexp(coefficient*logprobs, dim=(0,1))*coefficient
-#            logprob = torch.logsumexp(logprobs, dim=(0,1))
             reconstruction_error = reconstruction_error - logprob
 
     loss = total_KL + 10*reconstruction_error
@@ -79,7 +79,17 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
     optimizer.zero_grad()
 
     # Performance recording
-    train_history_logger.log(train_step, logits, x_mask, y_mask, KL_amounts, KL_names, total_KL, reconstruction_error, loss)
+    train_history_logger.log(train_step,
+                             logits,
+                             x_mask,
+                             y_mask,
+                             KL_amounts,
+                             KL_names,
+                             kernel_KL_amounts,
+                             kernel_KL_names,
+                             total_KL,
+                             reconstruction_error,
+                             loss)
 
 
 if __name__ == "__main__":

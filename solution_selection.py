@@ -40,12 +40,27 @@ class Logger():
         if self.task.solution is not None:
             self.solution_accuracies = []
 
-    def log(self, train_step, logits, x_mask, y_mask, KL_amounts, KL_names, total_KL, reconstruction_error, loss):
+    def log(self,
+            train_step,
+            logits,
+            x_mask,
+            y_mask,
+            KL_amounts,
+            KL_names,
+            kernel_KL_amounts,
+            kernel_KL_names,
+            total_KL,
+            reconstruction_error,
+            loss):
         if train_step == 0:
             for KL_name in KL_names:
                 self.KL_curves[KL_name] = []
+            for kernel_KL_name in kernel_KL_names:
+                self.KL_curves['                    ' + kernel_KL_name] = []
         for KL_amount, KL_name in zip(KL_amounts, KL_names):
             self.KL_curves[KL_name].append(float(torch.sum(KL_amount.detach()).cpu().numpy()))
+        for kernel_KL_amount, kernel_KL_name in zip(kernel_KL_amounts, kernel_KL_names):
+            self.KL_curves['                    ' + kernel_KL_name].append(float(torch.sum(kernel_KL_amount.detach()).cpu().numpy()))
         self.total_KL_curve.append(float(total_KL.detach().cpu().numpy()))
         self.reconstruction_error_curve.append(float(reconstruction_error.detach().cpu().numpy()))
         self.loss_curve.append(float(loss.detach().cpu().numpy()))
@@ -53,9 +68,6 @@ class Logger():
         self.track_solution(logits.detach(), x_mask.detach(), y_mask.detach())
 
     def track_solution(self, logits, x_mask, y_mask):
-#        self.current_logits = logits[self.task.n_train-1:-1,:,:,:,0]  # example, color, x, y    #################################################################
-#        self.current_x_mask = x_mask[self.task.n_train-1:-1,:,1]  # example, x
-#        self.current_y_mask = y_mask[self.task.n_train-1:-1,:,1]  # example, y
         self.current_logits = logits[self.task.n_train:,:,:,:,1]  # example, color, x, y
         self.current_x_mask = x_mask[self.task.n_train:,:,1]  # example, x
         self.current_y_mask = y_mask[self.task.n_train:,:,1]  # example, y
