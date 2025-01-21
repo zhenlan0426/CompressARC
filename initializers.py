@@ -59,6 +59,21 @@ class Initializer():
         out_weights = self.initialize_linear(dims, [conv_dim, vector_dim_fn])
         return [in1_weights, in2_weights, out_weights]
 
+    def initialize_direction_share(self, dims):
+        vector_dim_fn = self.vector_dim_fn
+        linears = []
+        for direction_dim1 in range(8):
+            linears.append([])
+            for direction_dim2 in range(8):
+#                if direction_dim1==direction_dim2:  ##########################################################
+#                    weight = self.initialize_zeros(dims, [vector_dim_fn(dims), vector_dim_fn(dims)])
+#                    bias = self.initialize_zeros(dims, [vector_dim_fn(dims)])
+#                    linears[direction_dim1].append([weight, bias])
+#                else:
+                    linears[direction_dim1].append(self.initialize_linear(dims, [vector_dim_fn, vector_dim_fn]))
+
+        return linears
+
     def initialize_multizeros(self, shape):
         return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_zeros)(shape)
     def initialize_multilinear(self, shape):
@@ -66,7 +81,9 @@ class Initializer():
     def initialize_multiresidual(self, n_in, n_out):
         return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_residual)(n_in, n_out)
     def initialize_multiposterior(self, channel_dim):
-        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_posterior)(channel_dim, kernel_mode=False)
+        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_posterior)(channel_dim)
+    def initialize_multidirection_share(self):
+        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_direction_share)()
 
     def initialize_kernel_multizeros(self, shape):
         return tensor_algebra.use_multitensor_system_to_kernel_multify(self.multitensor_system, self.initialize_zeros)(shape)
@@ -82,3 +99,40 @@ class Initializer():
             dims = [(i//2**j) % 2 for j in range(5)]
             multitensor[dims] = self.initialize_conv(dims, conv_dim)
         return multitensor
+
+    def symmetrize_xy(self, multiweights):
+        for dims in self.multitensor_system:
+            if dims[3] == 0 and dims[4] == 1:
+                from_dims = dims[:3] + [1, 0]
+                multiweights[dims] = multiweights[from_dims]
+
+    def symmetrize_direction_sharing(self, multiweights):
+        for dims in self.multitensor_system:
+            for direction_ind1 in range(8):
+                for direction_ind2 in range(8):
+                    from_direction_ind1 = direction_ind1
+                    from_direction_ind2 = direction_ind2
+                    if dims[3] + dims[4] == 1:  # one spatial dimension, symmetry wrt horizontal and vertical flip
+                        from_dims = dims[:3] + [1, 0]
+                        if dims[4] == 1:  # if y axis is the spatial one, tie the tensor to the x axis one but rotated 90 degrees
+                            from_direction_ind1 = (2+from_direction_ind1) % 8
+                            from_direction_ind2 = (2+from_direction_ind2) % 8
+                        # figure out which tensor is the canonical one we should tie the weights to
+                        flip_y = from_direction_ind1 > 4 or from_direction_ind1 in (0, 4) and from_direction_ind2 > 4
+                        if flip_y:
+                            from_direction_ind1 = (8-from_direction_ind1) % 8
+                            from_direction_ind2 = (8-from_direction_ind2) % 8
+                        flip_x = 2 < from_direction_ind1 < 6 or from_direction_ind1 in (2, 6) and 2 < from_direction_ind2 < 6
+                        if flip_x:
+                            from_direction_ind1 = (4-from_direction_ind1) % 8
+                            from_direction_ind2 = (4-from_direction_ind2) % 8
+                    else:  # no spatial dimensions, full D4 symmetry
+                        from_dims = dims
+                        # figure out which tensor is the canonical one we should tie the weights to
+                        rotation = int((from_direction_ind1//2)*2)
+                        from_direction_ind1 = (from_direction_ind1 - rotation) % 8
+                        from_direction_ind2 = (from_direction_ind2 - rotation) % 8
+                        flip = (from_direction_ind2 - from_direction_ind1) % 8 > 4
+                        if flip:
+                            from_direction_ind2 = (8+2*from_direction_ind1 - from_direction_ind2) % 8
+                    multiweights[dims][direction_ind1][direction_ind2] = multiweights[from_dims][from_direction_ind1][from_direction_ind2]

@@ -93,21 +93,21 @@ def decode_latents(global_capacity_adjustments, decode_weights, multiposteriors,
 
 
 # Symmetrize the weights with respect to swapping the x and y axes of the grid
-def symmetrize_xy_swap(multiweights, kernel_mode=False):
-    new_multiweights = multiweights.multitensor_system.make_multitensor()
-    for dims in multiweights.multitensor_system.iterate(kernel_mode=kernel_mode):
-        other_dims = dims[:3] + [dims[4], dims[3]]
-        new_weights = []
-        for i in range(len(multiweights[dims])):
-            new_weights.append((multiweights[dims][i] + torch.flip(multiweights[other_dims][i], dims=[-1]))/2)
-        new_multiweights[dims] = new_weights
-    return new_multiweights
+#def symmetrize_xy_swap(multiweights, kernel_mode=False):
+#    new_multiweights = multiweights.multitensor_system.make_multitensor()
+#    for dims in multiweights.multitensor_system.iterate(kernel_mode=kernel_mode):
+#        other_dims = dims[:3] + [dims[4], dims[3]]
+#        new_weights = []
+#        for i in range(len(multiweights[dims])):
+#            new_weights.append((multiweights[dims][i] + torch.flip(multiweights[other_dims][i], dims=[-1]))/2)
+#        new_multiweights[dims] = new_weights
+#    return new_multiweights
 
 def share_direction(residual, share_weights, direction, kernel_mode=False):
     down_project_weights = tensor_algebra.multify(lambda dims, weights: weights[0])(share_weights, kernel_mode=kernel_mode)
     up_project_weights = tensor_algebra.multify(lambda dims, weights: weights[1])(share_weights, kernel_mode=kernel_mode)
-    down_project_weights = symmetrize_xy_swap(down_project_weights, kernel_mode=kernel_mode)
-    up_project_weights = symmetrize_xy_swap(up_project_weights, kernel_mode=kernel_mode)
+#    down_project_weights = symmetrize_xy_swap(down_project_weights, kernel_mode=kernel_mode)
+#    up_project_weights = symmetrize_xy_swap(up_project_weights, kernel_mode=kernel_mode)
 
     x = affine(residual, down_project_weights, use_bias=False, kernel_mode=kernel_mode)
     if direction == 1:  # share up
@@ -204,7 +204,7 @@ def softmax(dims, x):
     return torch.cat(softmaxxes, dim=-1)
 
 
-def make_cumulative_layer(fn):
+def make_cumulative_layer(fn, diagonal_fn):
     def cumulative_layer(dims, x, masks):
 
         # rearrange mask to fit same shape as x
@@ -234,68 +234,157 @@ def make_cumulative_layer(fn):
         # do the other half of the vector dimension in the reverse direction.
         # do the other half of the direction dimension in the reverse direction.
         result_tensors = []
-        for direction_split in range(2):  # forward, backward
-            for vector_split in range(2):  # forward, backward
-                result_list = []
-                for direction_ind in range(2):  # x, y
-                    if dims[3+direction_ind]>0:
-                        x_slice = torch.select(x, direction_dim, 2*direction_split+direction_ind)
-                        x_slice = x_slice[...,vector_split::2]
-                        masks_slice = torch.select(masks, direction_dim, 0)
-                        if direction_split + vector_split == 1:
-                            # below: decrement index to account for slicing, increment index to go from direction to x
-                            x_slice = torch.flip(x_slice, [direction_dim+direction_ind])
-                            masks_flipped = torch.flip(masks_slice, [direction_dim+direction_ind])
+        for vector_split in range(2):  # forward, backward
+            result_list = []
+            for direction_split in range(2):  # forward, backward
+                for direction_ind in range(4):  # x, x+y, y, y-x
+                    if direction_ind % 2 == 0:  # cardinal direction
+                        cardinal_direction_ind = int(direction_ind//2)
+                        if dims[3+cardinal_direction_ind]>0:
+                            x_slice = torch.select(x, direction_dim, 4*direction_split+direction_ind)
+                            x_slice = x_slice[...,vector_split::2]
+                            masks_flipped = torch.select(masks, direction_dim, 0)
+                            if direction_split + vector_split == 1:
+                                # below: decrement index to account for slicing, increment index to go from direction to x
+                                x_slice = torch.flip(x_slice, [direction_dim+cardinal_direction_ind])
+                                masks_flipped = torch.flip(masks_flipped, [direction_dim+cardinal_direction_ind])
+                            result = fn(x_slice, direction_dim+cardinal_direction_ind, masks_flipped)
+                            if direction_split + vector_split == 1:
+                                result = torch.flip(result, [direction_dim+cardinal_direction_ind])
                         else:
-                            masks_flipped = masks_slice
-                        result = fn(x_slice, direction_dim+direction_ind, masks_flipped)
-                        if direction_split + vector_split == 1:
-                            result = torch.flip(result, [direction_dim+direction_ind])
-                    else:
-                        result = zero_tensor
+                            result = zero_tensor
+                    else:  # diagonal direction
+                        if dims[3] == 1 and dims[4] == 1:
+                            diagonal_direction_ind = int(direction_ind//2)  # 0 for x+y, 1 for y-x
+                            x_slice = torch.select(x, direction_dim, 4*direction_split+direction_ind)
+                            x_slice = x_slice[...,vector_split::2]
+                            masks_flipped = torch.select(masks, direction_dim, 0)
+                            if (direction_split + vector_split + diagonal_direction_ind) % 2 == 1:
+                                # below: decrement index to account for slicing, increment index to go from direction to x
+                                x_slice = torch.flip(x_slice, [direction_dim])
+                                masks_flipped = torch.flip(masks_flipped, [direction_dim])
+                            if direction_split + vector_split == 1:
+                                x_slice = torch.flip(x_slice, [direction_dim+1])
+                                masks_flipped = torch.flip(masks_flipped, [direction_dim+1])
+                            result = diagonal_fn(x_slice, direction_dim, direction_dim+1, masks_flipped)
+                            if (direction_split + vector_split + diagonal_direction_ind) % 2 == 1:
+                                result = torch.flip(result, [direction_dim])
+                            if direction_split + vector_split == 1:
+                                result = torch.flip(result, [direction_dim+1])
+                        else:
+                            result = zero_tensor
                     result_list.append(result)
-                result_tensors.append(result_list)
-
-        # stack direction dim together
-        direction_split_1 = torch.stack(result_tensors[0] + result_tensors[2], dim=direction_dim)
-        direction_split_2 = torch.stack(result_tensors[1] + result_tensors[3], dim=direction_dim)
-        return torch.cat([direction_split_1, direction_split_2], dim=-1)  # cat vector dim together
+            result_list = torch.stack(result_list, dim=direction_dim)  # stack direction dim together
+            result_tensors.append(result_list)
+        return torch.cat(result_tensors, dim=-1)  # cat vector dim together
     return cumulative_layer
 
-@tensor_algebra.multify
-@only_do_for_certain_shapes((1,1,1,1,1))
-@add_residual
-@make_cumulative_layer
-def cummax(x, dim, masks):
+def cummax_(x, dim, masks):
     masks = 1e3*(1-masks)
     max_ = torch.max(x-masks, dim=dim, keepdim=True)[0] + masks + 1e-3
     min_ = torch.min(x+masks, dim=dim, keepdim=True)[0] - masks - 1e-3
     x = torch.cummax(x-masks, dim=dim)[0] + masks
     return (x - min_) / (max_-min_) * 2 - 1
+def diagonal_cummax_(x, dim1, dim2, masks):
+    masks_ = 1e3*(1-masks)
+    min_dim = min(x.shape[dim1], x.shape[dim2])
+    n_iters = int(np.ceil(np.log2(min_dim)))
+    # compute the cummax and max via forward+backward associative scan
+    max_x = x - masks_
+    for sign in (1, -1):
+        for i in range(n_iters):
+            shift_amount = sign*2**i
+            shifted_x = diagonal_shift_(max_x, dim1, dim2, masks_, shift_amount=shift_amount, pad_value=-1e3)
+            max_x = torch.max(max_x, shifted_x)
+        if sign == 1:  # save the cummax after the forward associative scan
+            cummax_x = max_x + masks_
+    max_x = max_x + masks_
+    # compute the min via forward+backward associative scan
+    min_x = x + masks_
+    for sign in (1, -1):
+        for i in range(n_iters):
+            shift_amount = sign*2**i
+            shifted_x = diagonal_shift_(min_x, dim1, dim2, masks_, shift_amount=shift_amount, pad_value=1e3)
+            min_x = torch.min(min_x, shifted_x)
+    min_x = min_x - masks_
+    return ((cummax_x - min_x) / (max_x-min_x+1e-5) * 2 - 1)*masks
+cummax = tensor_algebra.multify(  # apply decorators
+         only_do_for_certain_shapes((1,1,1,1,1), (1,0,1,1,1))(
+         add_residual(
+         make_cumulative_layer(
+         cummax_, diagonal_cummax_
+         ))))
 
-@tensor_algebra.multify
-@only_do_for_certain_shapes((1,1,1,1,1))
-@add_residual
-@make_cumulative_layer
-def shift(x, dim, masks):
+def shift_(x, dim, masks):
     padding = torch.zeros_like(torch.narrow(x, dim, 0, 1))
     narrowed = torch.narrow(x, dim, 0, x.shape[dim]-1)
     return torch.cat([padding, narrowed], dim=dim)
+def diagonal_shift_(x, dim1, dim2, masks, shift_amount=1, pad_value=0):
+    for dim in (dim1, dim2):
+        padding = pad_value+torch.zeros_like(torch.narrow(x, dim, 0, abs(shift_amount)))
+        if shift_amount >= 0:
+            narrowed = torch.narrow(x, dim, 0, x.shape[dim]-shift_amount)
+            x = torch.cat([padding, narrowed], dim=dim)
+        else:
+            narrowed = torch.narrow(x, dim, -shift_amount, x.shape[dim]+shift_amount)
+            x = torch.cat([narrowed, padding], dim=dim)
+    return x
+shift = tensor_algebra.multify(  # apply decorators
+        only_do_for_certain_shapes((1,1,1,1,1), (1,0,1,1,1))(
+        add_residual(
+        make_cumulative_layer(
+        shift_, diagonal_shift_
+        ))))
+
+#x = torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]])                      ##########################for testing/debugging
+##x = torch.tensor([[14, 2, 16, 8], [11, 3, 7, 9], [6, 13, 12, 10], [15, 4, 5, 1]])
+##masks = torch.ones_like(x)
+#masks = torch.tensor([[1, 1, 1, 0], [1, 1, 1, 0], [1, 1, 1, 0], [0, 0, 0, 0]])
+#print(x)
+##print(diagonal_shift_(x, 0, 1, masks, shift_amount=-1, pad_value=-2))
+##print(diagonal_cummax_(x, 0, 1, masks))
+#fn = make_cumulative_layer(shift_, diagonal_shift_)
+#x = torch.stack([torch.stack([x]*8, dim=0)[None,None,:,:,:]]*2, dim=-1)
+#masks = torch.stack([masks[None,:,:]]*2, dim=-1)
+#y = fn([1,1,1,1,1], x, masks)
+#y = y[0,0,:,:,:,:]
+#print(y[0,:,:,0])
+#print(y[1,:,:,0])
+#print(y[2,:,:,0])
+#print(y[3,:,:,0])
+#print(y[4,:,:,0])
+#print(y[5,:,:,0])
+#print(y[6,:,:,0])
+#print(y[7,:,:,0])
+#print(y[0,:,:,1])
+#print(y[1,:,:,1])
+#print(y[2,:,:,1])
+#print(y[3,:,:,1])
+#print(y[4,:,:,1])
+#print(y[5,:,:,1])
+#print(y[6,:,:,1])
+#print(y[7,:,:,1])
+##raise ValueError
 
 directional_dims = [(i,j,1,k,l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
 @tensor_algebra.multify
 @only_do_for_certain_shapes(*directional_dims)
-def reverse(dims, x, weights, pre_norm=True, use_bias=False):
+def direction_share(dims, x, weights, pre_norm=True, use_bias=False):
     if pre_norm:
         z = normalize(x)
     else:
         z = x
     n_directions = dims[3]+dims[4]
     direction_dim = -2-n_directions
-    forward_slice = torch.narrow(z, direction_dim, 0, 2)
-    backward_slice = torch.narrow(z, direction_dim, 2, 2)
-    z = torch.cat([backward_slice, forward_slice], dim=direction_dim)
-    return x + affine(x, weights, use_bias=use_bias)
+    x = [torch.select(x, direction_dim, direction_ind) for direction_ind in range(8)]
+    for direction_ind1 in range(8):
+        for direction_ind2 in range(8):
+            coefficient = [1, 0.2, 0.4, 0.2, 1, 0.2, 0.4, 0.2][(direction_ind2-direction_ind1) % 8]
+            z_slice = torch.select(z, direction_dim, direction_ind2)
+            z_slice = affine(z_slice, weights[direction_ind1][direction_ind2], use_bias=use_bias)
+            x[direction_ind1] = x[direction_ind1] + coefficient*z_slice
+    x = torch.stack(x, dim=direction_dim)
+    return x
 
 @tensor_algebra.multify
 @add_residual

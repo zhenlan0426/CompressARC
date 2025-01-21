@@ -117,13 +117,17 @@ class Task():
         self.solution_tuple = ()
         for example_num in range(self.n_test):
             grid = solution[example_num]  # x, y
-            self.solution_tuple = self.solution_tuple + tuple(tuple(row) for row in grid)
+            self.solution_tuple = self.solution_tuple + (tuple(tuple(row) for row in grid),)
             grid = [[[1 if self.colors.index(color)==ref_color else 0
                       for color in row]
                      for row in grid]
                     for ref_color in range(self.n_colors+1)]  # color, x, y
             grid = np.array(grid)  # color, x, y
-            self.solution[example_num,:,:grid.shape[1],:grid.shape[2]] = grid
+            # unfortunately sometimes the solution tensor will be bigger than (n_x, n_y), and in these cases
+            # we'll never get the solution.
+            min_x = min(grid.shape[1], self.n_x)
+            min_y = min(grid.shape[2], self.n_y)
+            self.solution[example_num,:,:min_x,:min_y] = grid[:,:min_x,:min_y]
         self.solution = np.argmax(self.solution, axis=1)  # example, x, y. Black is included.
         self.solution = torch.from_numpy(self.solution).to(torch.get_default_device())  # example, x, y
         self.solution_hash = hash(self.solution_tuple)

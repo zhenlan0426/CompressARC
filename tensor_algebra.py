@@ -5,7 +5,7 @@ class MultiTensorSystem():
     def __init__(self, n_examples, n_colors, n_x, n_y, task):
         self.n_examples = n_examples
         self.n_colors = n_colors
-        self.n_directions = 4
+        self.n_directions = 8
         self.n_x = n_x
         self.n_y = n_y
         self.task = task

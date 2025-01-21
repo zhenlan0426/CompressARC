@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import torch
 
@@ -24,6 +26,10 @@ def mask_select_logprobs(mask, length):
 def take_step(task, model, optimizer, train_step, train_history_logger):
 
     optimizer.zero_grad()
+#    with torch.no_grad():            ####################################  test
+#        noise_norm = torch.sqrt(torch.mean(model.head_weights[0]**2))
+#        noise = noise_norm*torch.randn_like(noise_norm)
+#        model.head_weights[0].data = 0.99*model_head_weights[0] + 0.01*noise
     logits, x_mask, y_mask, KL_amounts, KL_names, kernel_KL_amounts, kernel_KL_names = model.forward()
     logits = torch.cat([torch.zeros_like(logits[:,:1,:,:]), logits], dim=1)  # add black
 
@@ -40,20 +46,24 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
         for in_out_mode in range(2):
             if example_num >= task.n_train and in_out_mode == 1:
                 continue
+            grid_size_uncertain = not (task.in_out_same_size or task.all_out_same_size and in_out_mode==1 or task.all_in_same_size and in_out_mode==0)
+            if grid_size_uncertain:
+                coefficient = 0.01**max(0, 1-train_step/100)
+            else:
+                coefficient = 1
             logits_slice = logits[example_num,:,:,:,in_out_mode]  # color, x, y
             problem_slice = task.problem[example_num,:,:,in_out_mode]  # x, y
             output_shape = task.shapes[example_num][in_out_mode]
-            x_log_partition, x_logprobs = mask_select_logprobs(x_mask[example_num,:,in_out_mode], output_shape[0])
-            y_log_partition, y_logprobs = mask_select_logprobs(y_mask[example_num,:,in_out_mode], output_shape[1])
+            x_log_partition, x_logprobs = mask_select_logprobs(coefficient*x_mask[example_num,:,in_out_mode], output_shape[0])
+            y_log_partition, y_logprobs = mask_select_logprobs(coefficient*y_mask[example_num,:,in_out_mode], output_shape[1])
             # Account for probability of getting right grid size, if grid size is not known
-            grid_size_uncertain = not (task.in_out_same_size or task.all_out_same_size and in_out_mode==1 or task.all_in_same_size and in_out_mode==0)
             if grid_size_uncertain:
                 x_log_partitions = []
                 y_log_partitions = []
                 for length in range(1, x_mask.shape[1]+1):
-                    x_log_partitions.append(mask_select_logprobs(x_mask[example_num,:,in_out_mode], length)[0])
+                    x_log_partitions.append(mask_select_logprobs(coefficient*x_mask[example_num,:,in_out_mode], length)[0])
                 for length in range(1, y_mask.shape[1]+1):
-                    y_log_partitions.append(mask_select_logprobs(y_mask[example_num,:,in_out_mode], length)[0])
+                    y_log_partitions.append(mask_select_logprobs(coefficient*y_mask[example_num,:,in_out_mode], length)[0])
                 x_log_partition = torch.logsumexp(torch.stack(x_log_partitions, dim=0), dim=0)
                 y_log_partition = torch.logsumexp(torch.stack(y_log_partitions, dim=0), dim=0)
 
@@ -66,11 +76,16 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
                     logprob = logprob - torch.nn.functional.cross_entropy(logits_crop[None,...], target_crop[None,...], reduction='sum')
                     logprobs[x_offset].append(logprob)
             logprobs = torch.stack([torch.stack(logprobs_, dim=0) for logprobs_ in logprobs], dim=0)  # x, y
-            if grid_size_uncertain:                       ####################################################################
-                coefficient = 0.1**max(0, 1-train_step/200)
+            if grid_size_uncertain:
+                coefficient = 0.1**max(0, 1-train_step/100)
             else:
                 coefficient = 1
-            logprob = torch.logsumexp(coefficient*logprobs, dim=(0,1))*coefficient
+#            coefficient = 1
+#            if grid_size_uncertain:                       ####################################################################
+#                coefficient = 0.1**max(0, 1-train_step/200)
+#            else:
+#                coefficient = 1
+            logprob = torch.logsumexp(coefficient*logprobs, dim=(0,1))/coefficient
             reconstruction_error = reconstruction_error - logprob
 
     loss = total_KL + 10*reconstruction_error
@@ -93,7 +108,9 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
 
 
 if __name__ == "__main__":
-    task_nums = list(range(100))
+    start_time = time.time()
+
+    task_nums = list(range(400))[99:]
     split = "training"  # "training", "evaluation, or "test"
     tasks = preprocessing.preprocess_tasks(split, task_nums)
     models = []
@@ -111,14 +128,14 @@ if __name__ == "__main__":
         train_history_loggers.append(train_history_logger)
 
     for i, (task, model, optimizer, train_step, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_steps, train_history_loggers)):
-        if i not in (54,68):
-            continue
         print(task.task_name)
-        n_iterations = 2000
+        n_iterations = 1500
         for _ in range(n_iterations):
-            take_step(task, model, optimizer, train_step, train_history_logger)
+            take_step(task, model, optimizer, train_steps[i], train_history_logger)
             train_steps[i] = train_steps[i] + 1
-            if train_steps[i] % 100 == 0:
+            if train_steps[i] % n_iterations == 0:
                 visualization.plot_solution(train_history_logger)
                 solution_selection.save_accuracy(train_history_loggers[:i+1])
                 solution_selection.plot_accuracy()
+
+    print("Time elapsed in seconds: " + str(time.time() - start_time))
