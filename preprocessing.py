@@ -3,7 +3,11 @@ import json
 import numpy as np
 import torch
 
-import tensor_algebra
+import multitensor_systems
+
+
+np.random.seed(0)
+torch.manual_seed(0)
 
 
 class Task():
@@ -87,7 +91,7 @@ class Task():
         colors.add(0)  # we'll treat black differently than other colors, as it is often used as a background color
         self.colors = list(sorted(colors))
         self.n_colors = len(self.colors)-1  # don't count black
-        self.multitensor_system = tensor_algebra.MultiTensorSystem(self.n_examples, self.n_colors, self.n_x, self.n_y, self)
+        self.multitensor_system = multitensor_systems.MultiTensorSystem(self.n_examples, self.n_colors, self.n_x, self.n_y, self)
 
     def create_problem_tensor(self, problem):
         # load the data into a tensor self.problem (note: separate from problem!!) for crossentropy evaluation

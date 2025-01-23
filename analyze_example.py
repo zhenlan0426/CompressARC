@@ -9,10 +9,16 @@ import train
 import preprocessing
 import arc_compressor
 import initializers
-import tensor_algebra
+import multitensor_systems
 import layers
 import solution_selection
 import visualization
+
+
+np.random.seed(0)
+torch.manual_seed(0)
+torch.set_default_dtype(torch.float32)
+torch.set_default_device('cuda')
 
 
 if __name__ == "__main__":
@@ -111,7 +117,7 @@ if __name__ == "__main__":
             all_but_last_dim = tuple(range(len(mean.shape) - 1))
             mean = mean - np.mean(mean, axis=all_but_last_dim)
             return mean
-        means = tensor_algebra.multify(average_samples)(*samples)
+        means = multitensor_systems.multify(average_samples)(*samples)
         example_x_mean = means[1,0,0,1,0]
         example_y_mean = means[1,0,0,0,1]
         color_direction_mean = means[0,1,1,0,0]
@@ -189,7 +195,6 @@ if __name__ == "__main__":
                     ax.tick_params(axis='x', which='major', labelsize=22)
 
                 ax.set_title('component ' + str(component_num) + ', strength = ' + str(float(strength)))
-#                plt.savefig(folder + task_name + '_' + tensor_name + '_component_' + str(component_num) + '_strength_' + str(float(strength)) + '.png', bbox_inches='tight')
                 plt.savefig(folder + task_name + '_' + tensor_name + '_component_' + str(component_num) + '.png', bbox_inches='tight')
                 plt.close()
 

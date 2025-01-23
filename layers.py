@@ -3,9 +3,14 @@ import itertools
 import numpy as np
 import torch
 
-import tensor_algebra
+import multitensor_systems
 
-@tensor_algebra.multify
+
+np.random.seed(0)
+torch.manual_seed(0)
+
+
+@multitensor_systems.multify
 def normalize(dims, x, debias=True):
     all_but_last = list(range(len(x.shape)-1))
     if debias:
@@ -13,7 +18,7 @@ def normalize(dims, x, debias=True):
     x = x / torch.sqrt(1e-8+torch.mean(x**2, dim=all_but_last))
     return x
 
-@tensor_algebra.multify
+@multitensor_systems.multify
 def normalize_range(dims, x, debias=True):
     all_but_last = list(range(len(x.shape)-1))
     x = x - torch.mean(x, dim=all_but_last)
@@ -23,7 +28,7 @@ def normalize_range(dims, x, debias=True):
     x = x / (1e-8+max_x)
     return x
 
-@tensor_algebra.multify
+@multitensor_systems.multify
 def affine(dims, x, weight, use_bias=False):
     x = torch.matmul(x, weight[0])
     if use_bias:
@@ -57,7 +62,7 @@ def channel_layer(global_capacity_adjustment, posterior):
     global_capacity_adjustment = 10*global_capacity_adjustment
 
     desired_global_capacity = torch.exp(global_capacity_adjustment)*init_capacity + min_capacity
-    output_scaling = 1-torch.exp(-desired_global_capacity / dimensionality * 2)                         ################################# explain formula in paper
+    output_scaling = 1-torch.exp(-desired_global_capacity / dimensionality * 2)
 
     local_capacity_adjustment = (global_capacity_adjustment + 
                                  local_capacity_adjustment - 
@@ -77,43 +82,32 @@ def channel_layer(global_capacity_adjustment, posterior):
     KL = 0.5*(noise_var + signal_var*normalized_mean**2 - 1) + desired_local_capacity/dimensionality
     return z, KL
 
-def decode_latents(global_capacity_adjustments, decode_weights, multiposteriors, kernel_mode=False):
+def decode_latents(global_capacity_adjustments, decode_weights, multiposteriors):
     KL_amounts = []
     KL_names = []
 
-    @tensor_algebra.multify
+    @multitensor_systems.multify
     def decode_latents_(dims, global_capacity_adjustment, decode_weight, posterior):
         z, KL = channel_layer(global_capacity_adjustment, posterior)
         x = affine(z, decode_weight, use_bias=True)
         KL_amounts.append(KL)
         KL_names.append(str(dims))
         return x
-    x = decode_latents_(global_capacity_adjustments, decode_weights, multiposteriors, kernel_mode=kernel_mode)
+    x = decode_latents_(global_capacity_adjustments, decode_weights, multiposteriors)
     return x, KL_amounts, KL_names
 
 
-# Symmetrize the weights with respect to swapping the x and y axes of the grid
-#def symmetrize_xy_swap(multiweights, kernel_mode=False):
-#    new_multiweights = multiweights.multitensor_system.make_multitensor()
-#    for dims in multiweights.multitensor_system.iterate(kernel_mode=kernel_mode):
-#        other_dims = dims[:3] + [dims[4], dims[3]]
-#        new_weights = []
-#        for i in range(len(multiweights[dims])):
-#            new_weights.append((multiweights[dims][i] + torch.flip(multiweights[other_dims][i], dims=[-1]))/2)
-#        new_multiweights[dims] = new_weights
-#    return new_multiweights
+def share_direction(residual, share_weights, direction):
+    down_project_weights = multitensor_systems.multify(lambda dims, weights: weights[0])(share_weights)
+    up_project_weights = multitensor_systems.multify(lambda dims, weights: weights[1])(share_weights)
 
-def share_direction(residual, share_weights, direction, kernel_mode=False):
-    down_project_weights = tensor_algebra.multify(lambda dims, weights: weights[0])(share_weights, kernel_mode=kernel_mode)
-    up_project_weights = tensor_algebra.multify(lambda dims, weights: weights[1])(share_weights, kernel_mode=kernel_mode)
-#    down_project_weights = symmetrize_xy_swap(down_project_weights, kernel_mode=kernel_mode)
-#    up_project_weights = symmetrize_xy_swap(up_project_weights, kernel_mode=kernel_mode)
+    multitensor_system = residual.multitensor_system
 
-    x = affine(residual, down_project_weights, use_bias=False, kernel_mode=kernel_mode)
+    x = affine(residual, down_project_weights, use_bias=False)
     if direction == 1:  # share up
-        def share(dims):
+        def share(dims, _):
             lower_xs = []
-            for lower_dims in x.multitensor_system.iterate(kernel_mode=kernel_mode):
+            for lower_dims in multitensor_system:
                 # check that lower_dims lower than dims in all indices
                 if all([lower_naxes <= naxes for lower_naxes, naxes in zip(lower_dims, dims)]):
                     lower_x = x[lower_dims]
@@ -125,9 +119,9 @@ def share_direction(residual, share_weights, direction, kernel_mode=False):
                     lower_xs.append(lower_x)
             return sum(lower_xs)
     else:  # share down
-        def share(dims):
+        def share(dims, _):
             higher_xs = []
-            for higher_dims in x.multitensor_system.iterate(kernel_mode=kernel_mode):
+            for higher_dims in multitensor_system:
                 # check that higher_dims higher than dims in all indices
                 if all([higher_naxes >= naxes for higher_naxes, naxes in zip(higher_dims, dims)]):
                     higher_x = x[higher_dims]
@@ -135,20 +129,20 @@ def share_direction(residual, share_weights, direction, kernel_mode=False):
                     for dim, (higher_naxes, naxes) in reversed(list(enumerate(zip(higher_dims, dims)))):
                         if higher_naxes > naxes:
                             axis = sum(higher_dims[:dim], 0)
-                            if not kernel_mode and (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
+                            if (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
                                 # expand/contract masks to make the dims the same as higher_x
                                 masks = x.multitensor_system.task.masks
-                                masks = 1-(1-masks[...,0])*(1-masks[...,1])  ############################ defend this choice in the paper
+                                masks = 1-(1-masks[...,0])*(1-masks[...,1])
                                 for i in range(sum(higher_dims[1:3])):  # insert color and direction dims
                                     masks = masks[:,None,...]
                                 if dims[4] == 0:  # remove y dim
                                     masks = masks[...,0]
                                 masks = masks[...,None]  # add vector dim
                                 higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
-                            elif not kernel_mode and (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
+                            elif (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
                                 # expand/contract masks to make the dims the same as higher_x
                                 masks = x.multitensor_system.task.masks
-                                masks = 1-(1-masks[...,0])*(1-masks[...,1])  ############################ defend this choice in the paper
+                                masks = 1-(1-masks[...,0])*(1-masks[...,1])
                                 for i in range(sum(higher_dims[1:3])):  # insert color and direction dims
                                     masks = masks[:,None,...]
                                 if higher_dims[3] == 0:  # remove x dim
@@ -159,20 +153,17 @@ def share_direction(residual, share_weights, direction, kernel_mode=False):
                                 higher_x = torch.mean(higher_x, dim=axis)
                     higher_xs.append(higher_x)
             return sum(higher_xs)
-    if kernel_mode:
-        x = tensor_algebra.use_multitensor_system_to_kernel_multify(residual.multitensor_system, share)()
-    else:
-        x = tensor_algebra.use_multitensor_system_to_multify(residual.multitensor_system, share)()
-    x = normalize(x, kernel_mode=kernel_mode)
-    x = affine(x, up_project_weights, use_bias=False, kernel_mode=kernel_mode)
-    residual = tensor_algebra.multify(lambda dims, x, y: x+y)(residual, x, kernel_mode=kernel_mode)
+    x = multitensor_systems.multify(share)(x)
+    x = normalize(x)
+    x = affine(x, up_project_weights, use_bias=False)
+    residual = multitensor_systems.multify(lambda dims, x, y: x+y)(residual, x)
     return residual
 
-def share_up(residual, share_up_weights, kernel_mode=False):
-    return share_direction(residual, share_up_weights, 1, kernel_mode=kernel_mode)
+def share_up(residual, share_up_weights):
+    return share_direction(residual, share_up_weights, 1)
 
-def share_down(residual, share_down_weights, kernel_mode=False):
-    return share_direction(residual, share_down_weights, -1, kernel_mode=kernel_mode)
+def share_down(residual, share_down_weights):
+    return share_direction(residual, share_down_weights, -1)
 
 
 def only_do_for_certain_shapes(*shapes):
@@ -186,7 +177,7 @@ def only_do_for_certain_shapes(*shapes):
     return decorator
 
 
-@tensor_algebra.multify
+@multitensor_systems.multify
 @add_residual
 def softmax(dims, x):
     axes = list(range(sum(dims)))
@@ -208,7 +199,7 @@ def make_cumulative_layer(fn, diagonal_fn):
     def cumulative_layer(dims, x, masks):
 
         # rearrange mask to fit same shape as x
-        masks = 1-(1-masks[...,0])*(1-masks[...,1])  ############################ defend this choice in the paper
+        masks = 1-(1-masks[...,0])*(1-masks[...,1])
         if dims[4]==0:
             masks = masks[:,:,0]
         if dims[3]==0:
@@ -308,7 +299,7 @@ def diagonal_cummax_(x, dim1, dim2, masks):
             min_x = torch.min(min_x, shifted_x)
     min_x = min_x - masks_
     return ((cummax_x - min_x) / (max_x-min_x+1e-5) * 2 - 1)*masks
-cummax = tensor_algebra.multify(  # apply decorators
+cummax = multitensor_systems.multify(  # apply decorators
          only_do_for_certain_shapes((1,1,1,1,1), (1,0,1,1,1))(
          add_residual(
          make_cumulative_layer(
@@ -329,45 +320,15 @@ def diagonal_shift_(x, dim1, dim2, masks, shift_amount=1, pad_value=0):
             narrowed = torch.narrow(x, dim, -shift_amount, x.shape[dim]+shift_amount)
             x = torch.cat([narrowed, padding], dim=dim)
     return x
-shift = tensor_algebra.multify(  # apply decorators
+shift = multitensor_systems.multify(  # apply decorators
         only_do_for_certain_shapes((1,1,1,1,1), (1,0,1,1,1))(
         add_residual(
         make_cumulative_layer(
         shift_, diagonal_shift_
         ))))
 
-#x = torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16]])                      ##########################for testing/debugging
-##x = torch.tensor([[14, 2, 16, 8], [11, 3, 7, 9], [6, 13, 12, 10], [15, 4, 5, 1]])
-##masks = torch.ones_like(x)
-#masks = torch.tensor([[1, 1, 1, 0], [1, 1, 1, 0], [1, 1, 1, 0], [0, 0, 0, 0]])
-#print(x)
-##print(diagonal_shift_(x, 0, 1, masks, shift_amount=-1, pad_value=-2))
-##print(diagonal_cummax_(x, 0, 1, masks))
-#fn = make_cumulative_layer(shift_, diagonal_shift_)
-#x = torch.stack([torch.stack([x]*8, dim=0)[None,None,:,:,:]]*2, dim=-1)
-#masks = torch.stack([masks[None,:,:]]*2, dim=-1)
-#y = fn([1,1,1,1,1], x, masks)
-#y = y[0,0,:,:,:,:]
-#print(y[0,:,:,0])
-#print(y[1,:,:,0])
-#print(y[2,:,:,0])
-#print(y[3,:,:,0])
-#print(y[4,:,:,0])
-#print(y[5,:,:,0])
-#print(y[6,:,:,0])
-#print(y[7,:,:,0])
-#print(y[0,:,:,1])
-#print(y[1,:,:,1])
-#print(y[2,:,:,1])
-#print(y[3,:,:,1])
-#print(y[4,:,:,1])
-#print(y[5,:,:,1])
-#print(y[6,:,:,1])
-#print(y[7,:,:,1])
-##raise ValueError
-
 directional_dims = [(i,j,1,k,l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
-@tensor_algebra.multify
+@multitensor_systems.multify
 @only_do_for_certain_shapes(*directional_dims)
 def direction_share(dims, x, weights, pre_norm=True, use_bias=False):
     if pre_norm:
@@ -386,7 +347,7 @@ def direction_share(dims, x, weights, pre_norm=True, use_bias=False):
     x = torch.stack(x, dim=direction_dim)
     return x
 
-@tensor_algebra.multify
+@multitensor_systems.multify
 @add_residual
 def nonlinear(dims, x):
     return torch.nn.functional.silu(x)
@@ -404,160 +365,3 @@ def postprocess_mask(task, x_mask, y_mask):
     x_mask = x_mask+torch.from_numpy(x_mask_modifier).to(x_mask.device).to(x_mask.dtype)
     y_mask = y_mask+torch.from_numpy(y_mask_modifier).to(y_mask.device).to(y_mask.dtype)
     return x_mask, y_mask
-
-# Below function computes:
-# a b c
-# d e f
-# g h i
-# ->
-# g d+h a+e+i b+f c
-def diagonal_reduce(tens, reducer, dim1, dim2, mode='full'):  # faster when ind1 > ind2. Gets rid of ind2.
-    assert mode in ('valid', 'full')
-    if mode == 'full':
-        start_ind = -tens.shape[dim2]+1
-        end_ind = tens.shape[dim1]
-    if mode == 'valid':
-        start_ind = min(0, tens.shape[dim1] - tens.shape[dim2])
-        end_ind = max(0, tens.shape[dim1] - tens.shape[dim2])+1
-    middle_ind = 0
-    for reduction_iter in range(int(np.ceil(np.log2(tens.shape[dim2])))):
-        if tens.shape[dim2] % 2 == 1:
-            tens = torch.nn.functional.pad(tens, (0,0)*(len(tens.shape)-dim2-1)+(0,1))
-        tens1 = torch.index_select(tens, dim2, torch.arange(0, tens.shape[dim2], 2))
-        tens2 = torch.index_select(tens, dim2, torch.arange(1, tens.shape[dim2], 2))
-        offset = 2**reduction_iter
-        tens = torch.cat([torch.narrow(tens2, dim1, 0, offset), reducer(torch.narrow(tens2, dim1, offset, tens1.shape[dim1]-offset), torch.narrow(tens1, dim1, 0, tens2.shape[dim1]-offset)), torch.narrow(tens1, dim1, tens2.shape[dim1]-offset, offset)], dim=dim1)
-        middle_ind += offset
-    tens = torch.narrow(tens, dim1, middle_ind + start_ind, end_ind - start_ind)
-    tens = torch.select(tens, dim2, 0)
-    return tens
-def generalized_conv(mode, tens1, tens2, dim1, dim2):
-    assert dim2 > dim1
-    tens1 = torch.unsqueeze(torch.unsqueeze(tens1, dim2+1), dim1+1)
-    tens2 = torch.unsqueeze(torch.unsqueeze(tens2, dim2), dim1)
-    v1, v2 = tens1, tens2
-    product = v1+v2
-    tens = diagonal_reduce(diagonal_reduce(product, lambda x, y: torch.maximum(x, y), dim1, dim1+1, mode=mode), lambda x, y: torch.maximum(x, y), dim2, dim2+1, mode=mode)
-    return tens
-
-def kernel_multify(multitensor_system, fn):
-    def multi_fn(*args, **kwargs):
-        multitensor = multitensor_system.make_multitensor()
-        for dims in multitensor_system:
-            new_args = []
-            for arg in args:
-                if isinstance(arg, MultiTensor):
-                    new_args.append(arg[dims])
-                else:
-                    new_args.append(arg)
-            new_kwargs = {}
-            for key, value in kwargs.items():
-                if isinstance(value, MultiTensor):
-                    new_kwargs[key] = value[dims]
-                else:
-                    new_kwargs[key] = value
-            multitensor[dims] = fn(dims, *new_args, **new_kwargs)
-        return multitensor
-    return multi_fn
-
-
-def convolution_layer(multi_x, multi_kernel, geometric_weights, masks):
-    result = multi_x.multitensor_system.make_multitensor()
-    all_dims_combinations = [
-            (1, 1, 0, 1, 1),
-            (1, 0, 0, 1, 1),
-            (0, 1, 0, 1, 1),
-            (0, 0, 0, 1, 1)]
-    for i in range(32):
-        kernel_dims = [(i//2**j) % 2 for j in range(5)]
-        if tuple(kernel_dims) not in all_dims_combinations:
-            result[kernel_dims] = multi_x[kernel_dims]
-            continue
-        x_from_dims = [1, 0] + kernel_dims[2:]
-        x_to_dims = [1] + kernel_dims[1:]
-
-        residual = multi_x[x_to_dims]
-        x = multi_x[x_from_dims]
-        kernel = multi_kernel[kernel_dims]
-        if kernel_dims[0] == 0:
-            kernel = kernel[None,...]
-
-
-        masks_ = 1-(1-masks[...,0])*(1-masks[...,1])  # example, x, y
-#        if x_from_dims[1] == 1:  # add color axis optionally
-#            masks_ = masks_[:,None,...]
-        x = x*masks_[...,None]  # add vector axis
-        if x_to_dims[1] == 1:
-            x = x[:,None,...]  # add color axis optionally
-
-        in1_weights, in2_weights, out_weights = geometric_weights[kernel_dims]
-        x = affine(x, in1_weights, use_bias=True)  ### matmul
-        kernel = affine(kernel, in2_weights, use_bias=True)  ### matmul
-#        radius_map = make_radius_map_like(x_to_dims, kernel)
-
-#        kernel = kernel - radius_map
-#        kernel = normalize_range(kernel)
-        x = normalize_range(x)
-
-    #            # pre-emtptively remove trivial self correlation at the origin
-    #            mask = torch.logical_and((torch.arange(x_.shape[-3])==x.shape[-3]-1)[:,None], (torch.arange(x_.shape[-2])==x.shape[-2]-1))
-    #            mask = mask[:,:,None].cuda().float()
-    #            x_ = x_*(1-mask)
-
-        x_dim = sum(x_to_dims[:3])
-        y_dim = x_dim+1
-        y = generalized_conv('full', x, kernel, x_dim, y_dim)
-        y = torch.narrow(y, x_dim, int((kernel.shape[x_dim]-1)//2), x.shape[x_dim])
-        y = torch.narrow(y, y_dim, int((kernel.shape[y_dim]-1)//2), x.shape[y_dim])
-
-#        # decorrelate output with inputs
-#        if tuple(x_dims)==tuple(kernel_dims):
-#            correlation = torch.sum(torch.sum(x*y, dim=y_dim), dim=x_dim)
-#            x_var = torch.sum(torch.sum(x*x, dim=y_dim), dim=x_dim)
-#            beta = torch.unsqueeze(torch.unsqueeze(correlation/x_var, dim=x_dim), dim=y_dim)
-#            predictor = beta*x
-#            y = y - predictor
-
-    #            # Y' = (I-X(X^TX)^{-1}X^T)Y
-    #            # X = USV
-    #            # X(X^TX)^{-1}X^T = USV(VTSUTUSV)^{-1}VTSUT = USV(VT S2 V)^{-1} VT S U = USV VT S-2 V VT S U = U UT = project to colspace of U
-    #            projectors = torch.stack([x, x_, x__], dim=-1)
-    #            projectors = torch.flatten(projectors, start_dim=-4, end_dim=-3)
-    #            projectors = torch.transpose(projectors, -2, -3)
-    #            projectors = torch.linalg.svd(projectors, full_matrices=False)[0]
-    #            projectors = torch.transpose(projectors, -2, -3)
-    #            projectors = torch.reshape(projectors, tuple(projectors.shape[:-3]) + (algebra.n_x, algebra.n_y, in1_weights.shape[1], 3))
-    #            y = normalize(y)
-    #            diff = y[...,None]
-    #            diff = torch.sum(projectors*diff, dim=(-4, -3), keepdims=True)
-    #            diff = torch.sum(projectors*diff, dim=-1)
-    #            y = y - diff
-
-        y = normalize(y)
-
-        y = affine(y, out_weights, use_bias=True)  ### matmul
-        result[x_to_dims] = residual + y
-    return result
-
-def make_radius_map_like(dims, x, center_hole=True):
-    x_dim = sum(dims[:3])
-    y_dim = x_dim+1
-    xrange = torch.arange(x.shape[x_dim])
-    yrange = torch.arange(x.shape[y_dim])
-    radius_map = torch.sqrt((xrange - (x.shape[x_dim]-1)/2)[:,None]**2 + (yrange - (x.shape[y_dim]-1)/2)[None,:]**2)
-    if center_hole:
-        radius_map = torch.where(radius_map < 0.5, torch.max(radius_map), radius_map)
-    radius_map = normalize_range(radius_map)
-    for dim in range(x_dim):
-        radius_map = radius_map[None,...]
-    radius_map = radius_map[...,None]
-    return radius_map
-
-@tensor_algebra.multify
-def add_kernel_radius_map(dims, x, kernel_radius_map_weights):
-    if not (dims[3] == 1 and dims[3] == 1):
-        return x
-    else:
-        radius_map = make_radius_map_like(dims, x)
-        x = x + affine(radius_map, kernel_radius_map_weights, use_bias=True)  ### matmul
-        return x

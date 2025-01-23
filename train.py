@@ -6,10 +6,14 @@ import torch
 import preprocessing
 import arc_compressor
 import initializers
-import tensor_algebra
+import multitensor_systems
 import layers
 import solution_selection
 import visualization
+
+
+np.random.seed(0)
+torch.manual_seed(0)
 
 
 def mask_select_logprobs(mask, length):
@@ -26,20 +30,12 @@ def mask_select_logprobs(mask, length):
 def take_step(task, model, optimizer, train_step, train_history_logger):
 
     optimizer.zero_grad()
-#    with torch.no_grad():            ####################################  test
-#        noise_norm = torch.sqrt(torch.mean(model.head_weights[0]**2))
-#        noise = noise_norm*torch.randn_like(noise_norm)
-#        model.head_weights[0].data = 0.99*model_head_weights[0] + 0.01*noise
-    logits, x_mask, y_mask, KL_amounts, KL_names, kernel_KL_amounts, kernel_KL_names = model.forward()
+    logits, x_mask, y_mask, KL_amounts, KL_names, = model.forward()
     logits = torch.cat([torch.zeros_like(logits[:,:1,:,:]), logits], dim=1)  # add black
 
     total_KL = 0
-#    for KL_amount in KL_amounts + kernel_KL_amounts:                ############################
-#        total_KL = total_KL + torch.sum(KL_amount)
     for KL_amount in KL_amounts:
         total_KL = total_KL + torch.sum(KL_amount)
-    for KL_amount in kernel_KL_amounts:
-        total_KL = total_KL + 0.1*torch.sum(KL_amount)
 
     reconstruction_error = 0
     for example_num in range(task.n_examples):
@@ -80,11 +76,6 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
                 coefficient = 0.1**max(0, 1-train_step/100)
             else:
                 coefficient = 1
-#            coefficient = 1
-#            if grid_size_uncertain:                       ####################################################################
-#                coefficient = 0.1**max(0, 1-train_step/200)
-#            else:
-#                coefficient = 1
             logprob = torch.logsumexp(coefficient*logprobs, dim=(0,1))/coefficient
             reconstruction_error = reconstruction_error - logprob
 
@@ -100,8 +91,6 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
                              y_mask,
                              KL_amounts,
                              KL_names,
-                             kernel_KL_amounts,
-                             kernel_KL_names,
                              total_KL,
                              reconstruction_error,
                              loss)
@@ -110,32 +99,30 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
 if __name__ == "__main__":
     start_time = time.time()
 
-    task_nums = list(range(400))[99:]
-    split = "training"  # "training", "evaluation, or "test"
+    task_nums = list(range(400))
+    split = "evaluation"  # "training", "evaluation, or "test"
     tasks = preprocessing.preprocess_tasks(split, task_nums)
     models = []
     optimizers = []
-    train_steps = []
     train_history_loggers = []
     for task in tasks:
         model = arc_compressor.ARCCompressor(task)
         models.append(model)
         optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
         optimizers.append(optimizer)
-        train_steps.append(0)
         train_history_logger = solution_selection.Logger(task)
-#        visualization.plot_problem(train_history_logger)
+        visualization.plot_problem(train_history_logger)
         train_history_loggers.append(train_history_logger)
 
-    for i, (task, model, optimizer, train_step, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_steps, train_history_loggers)):
-        print(task.task_name)
-        n_iterations = 1500
-        for _ in range(n_iterations):
-            take_step(task, model, optimizer, train_steps[i], train_history_logger)
-            train_steps[i] = train_steps[i] + 1
-            if train_steps[i] % n_iterations == 0:
-                visualization.plot_solution(train_history_logger)
-                solution_selection.save_accuracy(train_history_loggers[:i+1])
-                solution_selection.plot_accuracy()
+    true_solution_hashes = [task.solution_hash for task in tasks]
 
-    print("Time elapsed in seconds: " + str(time.time() - start_time))
+    for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
+        n_iterations = 2000
+        for train_step in range(n_iterations):
+            take_step(task, model, optimizer, train_step, train_history_logger)
+        visualization.plot_solution(train_history_logger)
+        solution_selection.save_predictions(train_history_loggers[:i+1])
+        solution_selection.plot_accuracy(true_solution_hashes)
+
+    with open('timing_result.txt', 'w') as f:
+        f.write("Time elapsed in seconds: " + str(time.time() - start_time))

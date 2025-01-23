@@ -1,7 +1,12 @@
 import numpy as np
 import torch
 
-import tensor_algebra
+import multitensor_systems
+
+
+np.random.seed(0)
+torch.manual_seed(0)
+
 
 class Initializer():
 
@@ -37,68 +42,49 @@ class Initializer():
         linear_2 = self.initialize_linear(dims, [n_out, vector_dim_fn])
         return [linear_1, linear_2]
 
-    def initialize_posterior(self, dims, channel_dim, kernel_mode=False):
+    def initialize_posterior(self, dims, channel_dim):
         if callable(channel_dim):
             channel_dim = channel_dim(dims)
         shape = self.multitensor_system.shape(dims, channel_dim)
-        if kernel_mode:
-            if dims[3] == 1:
-                shape[sum(dims[:3])] = 5
-            if dims[4] == 1:
-                shape[sum(dims[:4])] = 5
         mean = 0.01*torch.randn(shape)
         local_capacity_adjustment = self.initialize_zeros(dims, shape)
         mean.requires_grad = True
         self.weights_list.append(mean)
         return [mean, local_capacity_adjustment]
 
-    def initialize_conv(self, dims, conv_dim):
-        vector_dim_fn = self.vector_dim_fn
-        in1_weights = self.initialize_linear(dims, [vector_dim_fn, conv_dim])
-        in2_weights = self.initialize_linear(dims, [vector_dim_fn, conv_dim])
-        out_weights = self.initialize_linear(dims, [conv_dim, vector_dim_fn])
-        return [in1_weights, in2_weights, out_weights]
-
-    def initialize_direction_share(self, dims):
+    def initialize_direction_share(self, dims, _):
         vector_dim_fn = self.vector_dim_fn
         linears = []
         for direction_dim1 in range(8):
             linears.append([])
             for direction_dim2 in range(8):
-#                if direction_dim1==direction_dim2:  ##########################################################
-#                    weight = self.initialize_zeros(dims, [vector_dim_fn(dims), vector_dim_fn(dims)])
-#                    bias = self.initialize_zeros(dims, [vector_dim_fn(dims)])
-#                    linears[direction_dim1].append([weight, bias])
-#                else:
-                    linears[direction_dim1].append(self.initialize_linear(dims, [vector_dim_fn, vector_dim_fn]))
+                linears[direction_dim1].append(self.initialize_linear(dims, [vector_dim_fn, vector_dim_fn]))
 
         return linears
 
-    def initialize_multizeros(self, shape):
-        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_zeros)(shape)
-    def initialize_multilinear(self, shape):
-        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_linear)(shape)
-    def initialize_multiresidual(self, n_in, n_out):
-        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_residual)(n_in, n_out)
-    def initialize_multiposterior(self, channel_dim):
-        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_posterior)(channel_dim)
-    def initialize_multidirection_share(self):
-        return tensor_algebra.use_multitensor_system_to_multify(self.multitensor_system, self.initialize_direction_share)()
+    def initialize_head(self):
+        head_weights = self.initialize_linear([1, 1, 0, 1, 1], [self.vector_dim_fn([1, 1, 0, 1, 1]), 2])
+        self.weights_list.pop()  # remove bias
+        self.weights_list.pop()  # remove weight
+        head_weights[0].requires_grad = False
+        head_weights[0] = torch.stack([head_weights[0][...,0]]*2, dim=-1)
+        head_weights[0].requires_grad = True
+        self.weights_list.append(head_weights[0])
+        self.weights_list.append(head_weights[1])
+        return head_weights
 
-    def initialize_kernel_multizeros(self, shape):
-        return tensor_algebra.use_multitensor_system_to_kernel_multify(self.multitensor_system, self.initialize_zeros)(shape)
-    def initialize_kernel_multilinear(self, shape):
-        return tensor_algebra.use_multitensor_system_to_kernel_multify(self.multitensor_system, self.initialize_linear)(shape)
-    def initialize_kernel_multiresidual(self, n_in, n_out):
-        return tensor_algebra.use_multitensor_system_to_kernel_multify(self.multitensor_system, self.initialize_residual)(n_in, n_out)
-    def initialize_kernel_multiposterior(self, channel_dim):
-        return tensor_algebra.use_multitensor_system_to_kernel_multify(self.multitensor_system, self.initialize_posterior)(channel_dim, kernel_mode=True)
-    def initialize_multiconv(self, conv_dim):
-        multitensor = self.multitensor_system.make_multitensor()
-        for i in range(32):
-            dims = [(i//2**j) % 2 for j in range(5)]
-            multitensor[dims] = self.initialize_conv(dims, conv_dim)
-        return multitensor
+
+    def initialize_multizeros(self, shape):
+        return multitensor_systems.multify(self.initialize_zeros)(self.multitensor_system.make_multitensor(default=shape))
+    def initialize_multilinear(self, shape):
+        return multitensor_systems.multify(self.initialize_linear)(self.multitensor_system.make_multitensor(default=shape))
+    def initialize_multiresidual(self, n_in, n_out):
+        return multitensor_systems.multify(self.initialize_residual)(n_in, self.multitensor_system.make_multitensor(default=n_out))
+    def initialize_multiposterior(self, decoding_dim):
+        return multitensor_systems.multify(self.initialize_posterior)(self.multitensor_system.make_multitensor(default=decoding_dim))
+    def initialize_multidirection_share(self):
+        return multitensor_systems.multify(self.initialize_direction_share)(self.multitensor_system.make_multitensor())
+
 
     def symmetrize_xy(self, multiweights):
         for dims in self.multitensor_system:

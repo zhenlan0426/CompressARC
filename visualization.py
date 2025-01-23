@@ -1,7 +1,13 @@
+import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from matplotlib.colors import ListedColormap
+
+
+np.random.seed(0)
+torch.manual_seed(0)
+
 
 color_list = np.array([
     [0, 0, 0],
@@ -44,6 +50,8 @@ def plot_problem(logger):
             pixels[example_num,n_x+1-grid.shape[0]:n_x+1+grid.shape[0],mode_num,n_y+4-grid.shape[1]:n_y+4+grid.shape[1],:] = repeat_grid
     pixels = pixels.reshape([(n_train+n_test)*(2*n_x+2), 2*(2*n_y+8), 3])
     
+    os.makedirs("plots/", exist_ok=True)
+
     fig, ax = plt.subplots()
     ax.imshow(pixels, aspect='equal', interpolation='none')
     for example_num in range(n_examples):
@@ -81,25 +89,22 @@ def plot_solution(logger, fname=None):
     n_y = logger.task.n_y
 
     solutions_list = [
-            logger.current_probabilities.cpu().numpy(),
-#            logger.ema_probabilities_solution,
+            torch.softmax(logger.current_logits, dim=1).cpu().numpy(),
             torch.softmax(logger.ema_logits, dim=1).cpu().numpy(),
             logger.solution_most_frequent,
-#            logger.solution_second_most_frequent,
+            logger.solution_second_most_frequent,
             ]
     masks_list = [
             (logger.current_x_mask, logger.current_y_mask),
-            (logger.ema_x_mask, logger.ema_y_mask),
             (logger.ema_x_mask, logger.ema_y_mask),
             None,
             None,
             ]
     solutions_labels = [
             'sample',
-#            'sample average (probabilities)',
-            'sample average (logits)',
-            'most frequent',
-#            'second most frequent',
+            'sample average',
+            'guess 1',
+            'guess 2',
             ]
     n_plotted_solutions = len(solutions_list)
     pixels = 255+np.zeros([n_test, 2*n_x+2, n_plotted_solutions, 2*n_y+8, 3], dtype=np.uint8)
