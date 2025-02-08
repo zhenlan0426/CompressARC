@@ -5,27 +5,38 @@ import numpy as np
 import torch
 
 
+"""
+This file trains a model for every ARC-AGI task in a split.
+"""
+
 np.random.seed(0)
 torch.manual_seed(0)
 
 
 color_list = np.array([
-    [0, 0, 0],
-    [30, 147, 255],
-    [249, 60, 49],
-    [79, 204, 48],
-    [255, 220, 0],
-    [153, 153, 153],
-    [229, 58, 163],
-    [255, 133, 27],
-    [135, 216, 241],
-    [146, 18, 49],
+    [0, 0, 0],  # black
+    [30, 147, 255],  # blue
+    [249, 60, 49],  # red
+    [79, 204, 48],  # green
+    [255, 220, 0],  # yellow
+    [153, 153, 153],  # gray
+    [229, 58, 163],  # magenta
+    [255, 133, 27],  # orange
+    [135, 216, 241],  # light blue
+    [146, 18, 49],  # brown
 ])
 
 def convert_color(grid):  # grid dims must end in c
     return np.clip(np.matmul(grid, color_list), 0, 255).astype(np.uint8)
 
 def plot_problem(logger):
+    """
+    Draw a plot of an ARC-AGI problem, and save it in plots/
+    Args:
+        logger (Logger): A logger object used to log model outputs for the ARC-AGI task.
+    """
+
+    # Put all the grids beside one another on one grid
     n_train = logger.task.n_train
     n_test = logger.task.n_test
     n_examples = logger.task.n_examples
@@ -52,6 +63,7 @@ def plot_problem(logger):
     
     os.makedirs("plots/", exist_ok=True)
 
+    # Plot the combined grid and make gray dividers between the grid cells, arrows, and a question mark for unsolved examples.
     fig, ax = plt.subplots()
     ax.imshow(pixels, aspect='equal', interpolation='none')
     for example_num in range(n_examples):
@@ -78,16 +90,23 @@ def plot_problem(logger):
                         color=(59/255, 59/255, 59/255),
                         linewidth=0.3)
     plt.axis('off')
-    plt.savefig('plots/' + logger.task.task_name + '_problem.pdf', bbox_inches='tight', pad_inches=0)
+    plt.savefig('plots/' + logger.task.task_name + '_problem.png', bbox_inches='tight', pad_inches=0)
     plt.close()
 
 def plot_solution(logger, fname=None):
+    """
+    Draw a plot of a model's solution to an ARC-AGI problem, and save it in plots/
+    Draws four plots: A model output sample, the mean of samples, and the top two most common samples.
+    Args:
+        logger (Logger): A logger object used to log model outputs for the ARC-AGI task.
+    """
     n_train = logger.task.n_train
     n_test = logger.task.n_test
     n_examples = logger.task.n_examples
     n_x = logger.task.n_x
     n_y = logger.task.n_y
 
+    # Four plotted solutions
     solutions_list = [
             torch.softmax(logger.current_logits, dim=1).cpu().numpy(),
             torch.softmax(logger.ema_logits, dim=1).cpu().numpy(),
@@ -107,6 +126,8 @@ def plot_solution(logger, fname=None):
             'guess 2',
             ]
     n_plotted_solutions = len(solutions_list)
+
+    # Put all the grids beside one another on one grid
     pixels = 255+np.zeros([n_test, 2*n_x+2, n_plotted_solutions, 2*n_y+8, 3], dtype=np.uint8)
     shapes = []
     for subsplit_example_num in range(n_test):
@@ -124,8 +145,8 @@ def plot_solution(logger, fname=None):
                 else:
                     x_length = None
                     y_length = None
-                x_start, x_end = logger.best_slice_point(masks[0][subsplit_example_num,:], x_length)
-                y_start, y_end = logger.best_slice_point(masks[1][subsplit_example_num,:], y_length)
+                x_start, x_end = logger._best_slice_point(masks[0][subsplit_example_num,:], x_length)
+                y_start, y_end = logger._best_slice_point(masks[1][subsplit_example_num,:], y_length)
                 grid = grid[x_start:x_end,y_start:y_end,:]  # x, y, c
                 grid = np.clip(grid, 0, 255).astype(np.uint8)
             else:
@@ -139,6 +160,7 @@ def plot_solution(logger, fname=None):
 
     pixels = pixels.reshape([n_test*(2*n_x+2), n_plotted_solutions*(2*n_y+8), 3])
     
+    # Plot the combined grid and make gray dividers between the grid cells, and labels.
     fig, ax = plt.subplots()
     ax.imshow(pixels, aspect='equal', interpolation='none')
     for subsplit_example_num in range(n_test):
