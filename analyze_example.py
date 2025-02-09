@@ -1,5 +1,6 @@
 import os
 import pickle
+from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -54,7 +55,7 @@ if __name__ == "__main__":
 
     # Perform training for 1500 iterations
     n_iterations = 1500
-    for train_step in range(n_iterations):
+    for train_step in tqdm(range(n_iterations)):
         train.take_step(task, model, optimizer, train_step, train_history_logger)
         
         # Plot solutions every 50 steps
