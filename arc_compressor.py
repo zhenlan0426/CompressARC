@@ -28,7 +28,7 @@ class ARCCompressor:
 
     # This function gives the channel dimension of the residual stream depending on
     # which dimensions are present, for every tensor in the multitensor.
-    def vector_dim_fn(self, dims):
+    def channel_dim_fn(self, dims):
         return 16 if dims[2] == 0 else 8
 
     def __init__(self, task):
@@ -43,12 +43,12 @@ class ARCCompressor:
         self.multitensor_system = task.multitensor_system
 
         # Initialize weights
-        initializer = initializers.Initializer(self.multitensor_system, self.vector_dim_fn)
+        initializer = initializers.Initializer(self.multitensor_system, self.channel_dim_fn)
 
         self.multiposteriors = initializer.initialize_multiposterior(self.decoding_dim)
-        self.decode_weights = initializer.initialize_multilinear([self.decoding_dim, self.vector_dim_fn])
+        self.decode_weights = initializer.initialize_multilinear([self.decoding_dim, self.channel_dim_fn])
         initializer.symmetrize_xy(self.decode_weights)
-        self.global_capacity_adjustments = initializer.initialize_multizeros([self.decoding_dim])
+        self.target_capacities = initializer.initialize_multizeros([self.decoding_dim])
 
         self.share_up_weights = []
         self.share_down_weights = []
@@ -70,7 +70,7 @@ class ARCCompressor:
 
         self.head_weights = initializer.initialize_head()
         self.mask_weights = initializer.initialize_linear(
-            [1, 0, 0, 1, 0], [self.vector_dim_fn([1, 0, 0, 1, 0]), 2]
+            [1, 0, 0, 1, 0], [self.channel_dim_fn([1, 0, 0, 1, 0]), 2]
         )
 
         # Symmetrize weights so that their behavior is equivariant to swapping x and y dimension ordering
@@ -112,7 +112,7 @@ class ARCCompressor:
         """
         # Decoding layer
         x, KL_amounts, KL_names = layers.decode_latents(
-            self.global_capacity_adjustments, self.decode_weights, self.multiposteriors
+            self.target_capacities, self.decode_weights, self.multiposteriors
         )
 
         for layer_num in range(self.n_layers):

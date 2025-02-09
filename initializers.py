@@ -8,17 +8,17 @@ torch.manual_seed(0)
 
 
 class Initializer:
-    def __init__(self, multitensor_system, vector_dim_fn):
+    def __init__(self, multitensor_system, channel_dim_fn):
         """
         Initializes weight tensors for a multitensor system.
         Args:
             multitensor_system (MultiTensorSystem): The multitensor system that we want to use
                     for initializing weights.
-            vector_dim_fn (function): A function that takes in a dims list of type list[int], and
-                    returns an int representing the vector dimension size.
+            channel_dim_fn (function): A function that takes in a dims list of type list[int], and
+                    returns an int representing the channel dimension size.
         """
         self.multitensor_system = multitensor_system
-        self.vector_dim_fn = vector_dim_fn
+        self.channel_dim_fn = channel_dim_fn
         self.weights_list = []
 
     def initialize_zeros(self, dims, shape):
@@ -51,8 +51,8 @@ class Initializer:
 
     def initialize_residual(self, dims, n_in, n_out):
         """Initializes two linear layers that map to and from the residual stream."""
-        linear_1 = self.initialize_linear(dims, [self.vector_dim_fn, n_in])
-        linear_2 = self.initialize_linear(dims, [n_out, self.vector_dim_fn])
+        linear_1 = self.initialize_linear(dims, [self.channel_dim_fn, n_in])
+        linear_2 = self.initialize_linear(dims, [n_out, self.channel_dim_fn])
         return [linear_1, linear_2]
 
     def initialize_posterior(self, dims, channel_dim):
@@ -73,13 +73,13 @@ class Initializer:
         Initializes linear maps for the directional communication layer. Symmetrization
         is to be performed later by symmetrize_direction_sharing().
         """
-        vector_dim_fn = self.vector_dim_fn
-        return [[self.initialize_linear(dims, [vector_dim_fn, vector_dim_fn]) for _ in range(8)] for _ in range(8)]
+        channel_dim_fn = self.channel_dim_fn
+        return [[self.initialize_linear(dims, [channel_dim_fn, channel_dim_fn]) for _ in range(8)] for _ in range(8)]
 
     def initialize_head(self):
         """Initializes the linear head while ensuring symmetry wrt swapping x and y."""
         dims = [1, 1, 0, 1, 1]
-        head_weights = self.initialize_linear(dims, [self.vector_dim_fn(dims), 2])
+        head_weights = self.initialize_linear(dims, [self.channel_dim_fn(dims), 2])
 
         # Ensure symmetry
         head_weights[0].requires_grad = False

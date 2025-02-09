@@ -17,7 +17,7 @@ torch.manual_seed(0)
 @multitensor_systems.multify
 def normalize(dims, x, debias=True):
     """
-    Normalize the tensor to have variance one, for every index along the vector dimension.
+    Normalize the tensor to have variance one, for every index along the channel dimension.
     Args:
         dims (list[int]): Tells you which tensor in the multitensor system we're normalizing
         x (Tensor): Tensor to normalize.
@@ -33,7 +33,7 @@ def normalize(dims, x, debias=True):
 @multitensor_systems.multify
 def affine(dims, x, weight, use_bias=False):
     """
-    Apply a linear layer to a tensor, along the vector dimension.
+    Apply a linear layer to a tensor, along the channel dimension.
     Args:
         dims (list[int]): Tells you which tensor in the multitensor system we're normalizing
         x (Tensor): Input to the linear layer.
@@ -68,13 +68,12 @@ def add_residual(layer):
         return x + z
     return layer_with_residual
 
-def channel_layer(global_capacity_adjustment, posterior):
+def channel_layer(target_capacity, posterior):
     """
     Assume that z comes from some prior distribution, measure the KL divergence to the
     posterior, and give a sample z from the posterior.
     Args:
-        global_capacity_adjustment (Tensor): Up/down-adjustment for attempted KL capacity,
-                across the whole tensor, in log space.
+        target_capacity (Tensor): Rough attempted KL capacity (reparameterized).
         posterior (tuple[Tensor]): Consists of mean and local_capacity_adjustment. mean
                 parameterizes the mean of the posterior, and local_capacity_adjustment
                 gives the attempted KL capacity to use for each element in the tensor, in
@@ -91,7 +90,7 @@ def channel_layer(global_capacity_adjustment, posterior):
     min_capacity = torch.tensor(min_capacity)
     init_capacity = torch.tensor(init_capacity)
 
-    global_capacity_adjustment = 10*global_capacity_adjustment  # this reparameterization is for faster learning
+    target_capacity = 10*target_capacity  # this reparameterization is for faster learning
 
     # Compute some rudimentary post-scaling of z. This output scaling leaks a bit of information that isn't
     # measured by the KL, but luckily the scaling parameter is one-dimensional and probably doesn't have
@@ -99,12 +98,12 @@ def channel_layer(global_capacity_adjustment, posterior):
     # The output is scaled by the sigmoid of a signal-to-noise ratio, where the signal-to-noise ratio is the one
     # that an AWGN channel would use to achieve a channel capacity equal to the desired_global_capacity below.
     # A numerically stable formula for the sigmoid of this signal-to-noise ratio is used to compute output_scaling.
-    desired_global_capacity = torch.exp(global_capacity_adjustment)*init_capacity + min_capacity
+    desired_global_capacity = torch.exp(target_capacity)*init_capacity + min_capacity
     output_scaling = 1-torch.exp(-desired_global_capacity / dimensionality * 2)
 
     # We make local adjustments to the desired_global_capacity in order to allow different elements to have
     # different variances.
-    local_capacity_adjustment = (global_capacity_adjustment + 
+    local_capacity_adjustment = (target_capacity + 
                                  local_capacity_adjustment - 
                                  torch.mean(local_capacity_adjustment, dim=all_but_last_dim))
     desired_local_capacity = torch.exp(local_capacity_adjustment)*init_capacity + min_capacity
@@ -131,13 +130,12 @@ def channel_layer(global_capacity_adjustment, posterior):
     KL = 0.5*(noise_var + signal_var*normalized_mean**2 - 1) + desired_local_capacity/dimensionality
     return z, KL
 
-def decode_latents(global_capacity_adjustments, decode_weights, multiposteriors):
+def decode_latents(target_capacities, decode_weights, multiposteriors):
     """
     Decode the latents z, and give the KL loss for the VAE-like setup. Break the KL down into
     its components for possible analysis later. Apply a linear layer afterwards.
     Args:
-        global_capacity_adjustments (MultiTensor[Tensor]): Up/down-adjustments for attempted KL capacities,
-                for every tensor, in log space.
+        target_capacities (MultiTensor[Tensor]): Rough attempted KL capacities (reparameterized).
         decode_weights (MultiTensor[list[Tensor]]): A set of linear layer weights to apply to the decoded
                 outputs for every tensor in the multitensor output of the decoding layer.
         multiposteriors (MultiTensor[tuple[Tensor]]): Consists of mean and local_capacity_adjustment. mean
@@ -155,13 +153,13 @@ def decode_latents(global_capacity_adjustments, decode_weights, multiposteriors)
     KL_names = []
 
     @multitensor_systems.multify
-    def decode_latents_(dims, global_capacity_adjustment, decode_weight, posterior):
-        z, KL = channel_layer(global_capacity_adjustment, posterior)
+    def decode_latents_(dims, target_capacity, decode_weight, posterior):
+        z, KL = channel_layer(target_capacity, posterior)
         x = affine(z, decode_weight, use_bias=True)
         KL_amounts.append(KL)
         KL_names.append(str(dims))
         return x
-    x = decode_latents_(global_capacity_adjustments, decode_weights, multiposteriors)
+    x = decode_latents_(target_capacities, decode_weights, multiposteriors)
     return x, KL_amounts, KL_names
 
 
@@ -218,7 +216,7 @@ def share_direction(residual, share_weights, direction):
                                     masks = masks[:,None,...]
                                 if dims[4] == 0:  # remove y dim
                                     masks = masks[...,0]
-                                masks = masks[...,None]  # add vector dim
+                                masks = masks[...,None]  # add channel dim
                                 higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
                             elif (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
                                 # expand/contract masks to make the dims the same as higher_x
@@ -228,7 +226,7 @@ def share_direction(residual, share_weights, direction):
                                     masks = masks[:,None,...]
                                 if higher_dims[3] == 0:  # remove x dim
                                     masks = masks[...,0,:]
-                                masks = masks[...,None]  # add vector dim
+                                masks = masks[...,None]  # add channel dim
                                 higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
                             else:
                                 higher_x = torch.mean(higher_x, dim=axis)
@@ -287,7 +285,7 @@ def only_do_for_certain_shapes(*shapes):
 def softmax(dims, x):
     """
     Apply the softmax layer. Take softmax over all combinations of dims, but never include
-    the vector dim nor the example dim.
+    the channel dim nor the example dim.
     Args:
         dims (list[int]): Ignore this argument. It will be filled in by the multify decorator.
         x (MultiTensor[Tensor]): The input to the softmax layer.
@@ -352,14 +350,14 @@ def make_directional_layer(fn, diagonal_fn):
         # is not present in the tensor x
         zero_tensor = torch.zeros_like(torch.select(x, direction_dim, 0))
 
-        # split the vector dimension into two.
+        # split the channel dimension into two.
         # split the direction dimension into two.
         # for each half of the direction dimension, each index of the direction dimension corresponds
         # to either x or y, and we accumulate in those respective dimensions.
-        # do the other half of the vector dimension in the reverse direction.
+        # do the other half of the channel dimension in the reverse direction.
         # do the other half of the direction dimension in the reverse direction.
         result_tensors = []
-        for vector_split in range(2):  # forward, backward
+        for channel_split in range(2):  # forward, backward
             result_list = []
             for direction_split in range(2):  # forward, backward
                 for direction_ind in range(4):  # x, x+y, y, y-x
@@ -367,14 +365,14 @@ def make_directional_layer(fn, diagonal_fn):
                         cardinal_direction_ind = int(direction_ind//2)
                         if dims[3+cardinal_direction_ind]>0:
                             x_slice = torch.select(x, direction_dim, 4*direction_split+direction_ind)
-                            x_slice = x_slice[...,vector_split::2]
+                            x_slice = x_slice[...,channel_split::2]
                             masks_flipped = torch.select(masks, direction_dim, 0)
-                            if direction_split + vector_split == 1:
+                            if direction_split + channel_split == 1:
                                 # below: decrement index to account for slicing, increment index to go from direction to x
                                 x_slice = torch.flip(x_slice, [direction_dim+cardinal_direction_ind])
                                 masks_flipped = torch.flip(masks_flipped, [direction_dim+cardinal_direction_ind])
                             result = fn(x_slice, direction_dim+cardinal_direction_ind, masks_flipped)
-                            if direction_split + vector_split == 1:
+                            if direction_split + channel_split == 1:
                                 result = torch.flip(result, [direction_dim+cardinal_direction_ind])
                         else:
                             result = zero_tensor
@@ -382,26 +380,26 @@ def make_directional_layer(fn, diagonal_fn):
                         if dims[3] == 1 and dims[4] == 1:
                             diagonal_direction_ind = int(direction_ind//2)  # 0 for x+y, 1 for y-x
                             x_slice = torch.select(x, direction_dim, 4*direction_split+direction_ind)
-                            x_slice = x_slice[...,vector_split::2]
+                            x_slice = x_slice[...,channel_split::2]
                             masks_flipped = torch.select(masks, direction_dim, 0)
-                            if (direction_split + vector_split + diagonal_direction_ind) % 2 == 1:
+                            if (direction_split + channel_split + diagonal_direction_ind) % 2 == 1:
                                 # below: decrement index to account for slicing, increment index to go from direction to x
                                 x_slice = torch.flip(x_slice, [direction_dim])
                                 masks_flipped = torch.flip(masks_flipped, [direction_dim])
-                            if direction_split + vector_split == 1:
+                            if direction_split + channel_split == 1:
                                 x_slice = torch.flip(x_slice, [direction_dim+1])
                                 masks_flipped = torch.flip(masks_flipped, [direction_dim+1])
                             result = diagonal_fn(x_slice, direction_dim, direction_dim+1, masks_flipped)
-                            if (direction_split + vector_split + diagonal_direction_ind) % 2 == 1:
+                            if (direction_split + channel_split + diagonal_direction_ind) % 2 == 1:
                                 result = torch.flip(result, [direction_dim])
-                            if direction_split + vector_split == 1:
+                            if direction_split + channel_split == 1:
                                 result = torch.flip(result, [direction_dim+1])
                         else:
                             result = zero_tensor
                     result_list.append(result)
             result_list = torch.stack(result_list, dim=direction_dim)  # stack direction dim together
             result_tensors.append(result_list)
-        return torch.cat(result_tensors, dim=-1)  # cat vector dim together
+        return torch.cat(result_tensors, dim=-1)  # cat channel dim together
     return directional_layer
 
 """

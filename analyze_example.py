@@ -69,7 +69,7 @@ if __name__ == "__main__":
              KL_curves={key:np.array(val) for key, val in train_history_logger.KL_curves.items()},
              reconstruction_error_curve=np.array(train_history_logger.reconstruction_error_curve),
              multiposteriors=model.multiposteriors,
-             global_capacity_adjustments=model.global_capacity_adjustments,
+             target_capacities=model.target_capacities,
              decode_weights=model.decode_weights)
 
     # Load the metrics, model weights, and learned representations.
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     KL_curves = stored_data['KL_curves'][()]
     reconstruction_error_curve = stored_data['reconstruction_error_curve']
     multiposteriors = stored_data['multiposteriors'][()]
-    global_capacity_adjustments = stored_data['global_capacity_adjustments'][()]
+    target_capacities = stored_data['target_capacities'][()]
     decode_weights = stored_data['decode_weights'][()]
     
     # Plot the KL curves over time.
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     # Get the learned representation tensors
     samples = []
     for i in range(100):
-        sample, KL_amounts, KL_names = layers.decode_latents(global_capacity_adjustments,
+        sample, KL_amounts, KL_names = layers.decode_latents(target_capacities,
                                            decode_weights, multiposteriors)
         samples.append(sample)
 
