@@ -1,8 +1,6 @@
-# ARC-AGI Without Pretraining
+![image](teaser_figure_w_title.png)
 
-This repository contains code for the ARC-AGI Without Pretraining project TODO_link_here.
-
-## TLDR; How to solve an ARC-AGI task
+# TLDR; How to solve an ARC-AGI task
 
 Run `analyze_example.py` to initialize a new model and train from scratch:
 ```
@@ -23,7 +21,7 @@ The code will create a folder `<task>/` and put plots there after 1500 steps of 
 Most tasks may take up to 20 minutes to run, on one NVIDIA GeForce RTX 4070 GPU.
 
 
-## Tips for Reading the Code
+# Tips for Reading the Code
 
 A basic description of the code files in this repo:
 
