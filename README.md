@@ -1,6 +1,16 @@
 ![image](teaser_figure_w_title.png)
 
-# TLDR; How to solve an ARC-AGI task
+# Installation
+
+```
+> git clone https://github.com/iliao2345/CompressARC.git
+> cd CompressARC
+> python -m venv arc_without_reasoning
+> source arc_without_reasoning/bin/activate
+> pip install -r requirements.txt
+```
+
+# How to solve an ARC-AGI task
 
 Run `analyze_example.py` to initialize a new model and train from scratch:
 ```
@@ -54,3 +64,16 @@ A basic description of the code files in this repo:
 - This repo uses `x` and `y` to refer to the $height$ and $width$ dimensions, respectively.
 
 Code for different files may be written in slightly different styles due to polishing of individual code files by ChatGPT.
+
+
+# Citation
+
+If you'd like to cite this blog post, use the following entry:
+```
+@online{liao2025arcagiwithoutpretraining,
+	author = {Isaac Liao and Albert Gu},
+	title = {ARC-AGI Without Pretraining},
+	year = {2025},
+	url = {https://yourblog.com/post-url},
+}
+```
