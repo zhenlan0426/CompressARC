@@ -64,3 +64,16 @@ A basic description of the code files in this repo:
 - This repo uses `x` and `y` to refer to the $height$ and $width$ dimensions, respectively.
 
 Code for different files may be written in slightly different styles due to polishing of individual code files by ChatGPT.
+
+
+# Citation
+
+If you'd like to cite this blog post, use the following entry:
+```
+@online{liao2025arcagiwithoutpretraining,
+	author = {Isaac Liao and Albert Gu},
+	title = {ARC-AGI Without Pretraining},
+	year = {2025},
+	url = {https://yourblog.com/post-url},
+}
+```
