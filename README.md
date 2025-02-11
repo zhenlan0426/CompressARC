@@ -1,6 +1,16 @@
 ![image](teaser_figure_w_title.png)
 
-# TLDR; How to solve an ARC-AGI task
+# Installation
+
+```
+> git clone https://github.com/iliao2345/CompressARC.git
+> cd CompressARC
+> python -m venv arc_without_reasoning
+> source arc_without_reasoning/bin/activate
+> pip install -r requirements.txt
+```
+
+# How to solve an ARC-AGI task
 
 Run `analyze_example.py` to initialize a new model and train from scratch:
 ```
