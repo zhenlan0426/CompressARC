@@ -10,7 +10,7 @@ tags:
   - Architecture
   - AI
 ---
-![image](./resources/teaser_figure_w_title.png)
+<a name="topofpage"></a>![image](./resources/teaser_figure_w_title.png)
 
 This document is about a project we began several months ago to try out a niche perspective in machine learning: that **lossless information compression is sufficient to produce intelligent behavior**. We measured our success using the ARC-AGI dataset, and made an information compression based method that gets 20% on the evaluation set, with the following properties:
 
@@ -26,9 +26,9 @@ Our conclusion: even without any external pretraining or large-scale search, los
 
 ## Table of Contents
 
-[[#ARC-AGI Without Pretraining|Top of Page]]
-1. [[#Table of Contents]]
-2. [[#ARC-AGI as an Information Compression Problem]]
+[Top of Page](#topofpage)
+1. [Table of Contents](#table-of-contents)
+2. [ARC-AGI as an Information Compression Problem](#arc-agi-as-an-information-compression-problem)
 	- [[#Compression Leads to Intelligence]]
 	- [[#A Game of Broken Telephone]]
 	- [[#So what strategy will Alice and Bob use?]]
@@ -84,7 +84,7 @@ Our conclusion: even without any external pretraining or large-scale search, los
 
 ---
 
-## ARC-AGI as an Information Compression Problem
+## <a name="formulation"></a>ARC-AGI as an Information Compression Problem
 
 So what do we mean when we say that "the ability to losslessly compress information is sufficient to produce intelligent behavior", and how does that relate to ARC-AGI?
 
