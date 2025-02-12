@@ -769,6 +769,9 @@ If you'd like to cite this blog post, use the following entry:
 
 
 TODO: upload duplicated run results to repo. Do non-directional experiment.
+TODO: add back to top links
+TODO: fix headers
+TODO: fix image-to-next-line spacing
 
 TODO: make sure links work. Click on all of them.
 TODO: fix the list numbering
