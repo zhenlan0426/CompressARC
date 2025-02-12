@@ -29,57 +29,57 @@ Our conclusion: even without any external pretraining or large-scale search, los
 [Top of Page](#topofpage)
 1. [Table of Contents](#table-of-contents)
 2. [ARC-AGI as an Information Compression Problem](#arc-agi-as-an-information-compression-problem)
-	- [[#Compression Leads to Intelligence]]
-	- [[#A Game of Broken Telephone]]
-	- [[#So what strategy will Alice and Bob use?]]
-	- [[#Why does Bob Reconstruct the Correct Solutions to ARC-AGI?]]
-	- [[#How do we Simulate the Game?]]
-	- [[#TLDR; The Final Problem Setup]]
-3. [[#Architecture]]
-	- [[#Multitensors]]
-	- [[#Decoding Layer]]
-	- [[#Multitensor Communication Layer]]
-	- [[#Softmax Layer]]
-	- [[#Directional Cummax/Shift Layer]]
-	- [[#Directional Communication Layer]]
-	- [[#Nonlinear Layer]]
-	- [[#Normalization Layer]]
-	- [[#Linear Heads]]
-4. [[#Results]]
-	- [[#What Problems Can and Can't We Solve?]]
-	- [[#Seed Dependence]]
-	- [[#What if we Remove Directional Layers?]]
-5. [[#Case Study: Problem 272f95fa]]
-	- [[#Watching the Network Learn (Problem 272f95fa)]]
-	- [[#Solution Analysis (Problem 272f95fa)]]
-6. [[#How to Improve Our Work]]
-	- [[#Joint Compression via Weight Sharing Between Problems]]
-	- [[#Convolution-like Layers for Shape Copying Tasks]]
-	- [[#KL Floor for Posterior Collapse]]
-	- [[#Regularization]]
-7. [[#Related Work]]
-	- [[#Equivalence of Compression and Intelligence]]
-	- [[#Information Theory and Coding Theory]]
-	- [[#Variational Autoencoders]]
-	- [[#ARC-AGI Methods]]
-	- [[#Deep Learning Architectures]]
-8. [[#Appendix]]
-	- [[#Rules for legal multitensors]]
-	- [[#Weight Tying for Reflection/Rotation Symmetry]]
-	- [[#Preprocessing]]
-		- [[#Output Shape Determination]]
-		- [[#Number of Colors]]
-	- [[#Postprocessing]]
-	- [[#Training]]
-	- [[#What Happens to the Representations during Learning]]
-	- [[#Additional Case Studies]]
-		- [[#Case Study Problem 6d75e8bb]]
-			- [[#Watching the Network Learn (Problem 6d75e8bb)]]
-			- [[#Solution Analysis (Problem 6d75e8bb)]]
-		-  [[#Case Study: Problem 41e4d17e]]
-			- [[#Solution Analysis (Problem 41e4d17e)]]
-	- [[#List of Mentioned ARC-AGI Tasks]]
-	- [[#Code]]
+	- [Compression Leads to Intelligence](#compression-leads-to-intelligence)
+	- [A Game of Broken Telephone](#a-game-of-broken-telephone)
+	- [So what strategy will Alice and Bob use?](#so-what-strategy-will-alice-and-bob-use)
+	- [Why does Bob Reconstruct the Correct Solutions to ARC-AGI?](#why-does-bob-reconstruct-the-correct-solutions-to-arc-agi)
+	- [How do we Simulate the Game?](#how-do-we-simulate-the-game)
+	- [TLDR; The Final Problem Setup](#tldr-the-final-problem-setup)
+3. [Architecture](#architecture)
+	- [Multitensors](#multitensors)
+	- [Decoding Layer](#decoding-layer)
+	- [Multitensor Communication Layer](#multitensor-communication-layer)
+	- [Softmax Layer](#softmax-layer)
+	- [Directional Cummax/Shift Layer](#directional-cummaxshift-layer)
+	- [Directional Communication Layer](#directional-communication-layer)
+	- [Nonlinear Layer](#nonlinear-layer)
+	- [Normalization Layer](#normalization-layer)
+	- [Linear Heads](#linear-heads)
+4. [Results](#results)
+	- [What Problems Can and Can't We Solve?](#what-problems-can-and-cant-we-solve)
+	- [Seed Dependence](#seed-dependence)
+	- [What if we Remove Directional Layers?](#what-if-we-remove-directional-layers)
+5. [Case Study: Problem 272f95fa](#case-study-problem-272f95fa)
+	- [Watching the Network Learn (Problem 272f95fa)](#watching-the-network-learn-problem-272f95fa)
+	- [Solution Analysis (Problem 272f95fa)](#solution-analysis-problem-272f95fa)
+6. [How to Improve Our Work](#how-to-improve-our-work)
+	- [Joint Compression via Weight Sharing Between Problems](#joint-compression-via-weight-sharing-between-problems)
+	- [Convolution-like Layers for Shape Copying Tasks](#convolution-like-layers-for-shape-copying-tasks)
+	- [KL Floor for Posterior Collapse](#kl-floor-for-posterior-collapse)
+	- [Regularization](#regularization)
+7. [Related Work](#related-work)
+	- [Equivalence of Compression and Intelligence](#equivalence-of-compression-and-intelligence)
+	- [Information Theory and Coding Theory](#information-theory-and-coding-theory)
+	- [Variational Autoencoders](#variational-autoencoders)
+	- [ARC-AGI Methods](#arc-agi-methods)
+	- [Deep Learning Achitectures](#deep-learning-architectures)
+8. [Appendix](#appendix)
+	- [Rules for legal multitensors](#rules-for-legal-multitensors)
+	- [Weight Tying for Reflection/Rotation Symmetry](#weight-tying-for-reflectionrotation-symmetry)
+	- [Preprocessing](#preprocessing)
+		- [Output Shape Determination](#output-shape-determination)
+		- [Number of Colors](#number-of-colors)
+	- [Postprocessing](#postprocessing)
+	- [Training](#training)
+	- [What Happens to the Representations during Learning](#what-happens-to-the-representations-during-learning)
+	- [Additional Case Studies](#additional-case-studies)
+		- [Case Study Problem 6d75e8bb](#case-study-problem-6d75e8bb)
+			- [Watching the Network Learn (Problem 6d75e8bb)](#watching-the-network-learn-problem-6d75e8bb)
+			- [Solution Analysis (Problem 6d75e8bb)](#solution-analysis-problem-6d75e8bb)
+		-  [Case Study: Problem 41e4d17e](#case-study-problem-41e4d17e)
+			- [Solution Analysis (Problem 41e4d17e)](#solution-analysis-problem-41e4d17e)
+	- [List of Mentioned ARC-AGI Tasks](#list-of-mentioned-arc-agi-tasks)
+	- [Code](#code)
 
 
 ---
@@ -88,7 +88,7 @@ Our conclusion: even without any external pretraining or large-scale search, los
 
 So what do we mean when we say that "the ability to losslessly compress information is sufficient to produce intelligent behavior", and how does that relate to ARC-AGI?
 
-**In short, we believe that lossless compression schemes can be converted into programs for solving ARC-AGI, and the more bit-efficient the compression scheme, the "smarter" the solver program and the more likely it is to give correct solutions.** To use a compressor as an ARC-AGI solver, we figure out the solution grid that when put together with the problem grids, makes the whole task come out to the smallest possible compressed code length. The main challenge is to find a compression scheme that allows for finding this "best solution grid", while maintaining strong bit-efficiency. [[#TLDR; The Final Problem Setup|We will later find]] that a variational autoencoder serves this purpose very well; the compressed code length is equivalent to the loss, and the process of compression is equivalent to training.
+**In short, we believe that lossless compression schemes can be converted into programs for solving ARC-AGI, and the more bit-efficient the compression scheme, the "smarter" the solver program and the more likely it is to give correct solutions.** To use a compressor as an ARC-AGI solver, we figure out the solution grid that when put together with the problem grids, makes the whole task come out to the smallest possible compressed code length. The main challenge is to find a compression scheme that allows for finding this "best solution grid", while maintaining strong bit-efficiency. [We will later find](#tldr-the-final-problem-setup) that a variational autoencoder serves this purpose very well; the compressed code length is equivalent to the loss, and the process of compression is equivalent to training.
 
 #### Compression Leads to Intelligence
 
@@ -100,7 +100,7 @@ So why is compression sufficient to produce intelligence? Suppose there is a dat
 
 **Our solution to ARC-AGI is built upon the assumption that lossless information compression is sufficient for predicting the unknown solutions.**
 
-The below sections describe our thought process and reasoning when building a lossless compression system specifically made for solving ARC-AGI. More details about eliciting intelligence from lossless compression can be found on the [about section of the Hutter Prize website][http://prize.hutter1.net/hfaq.htm#about]. (The Hutter Prize is an information compression challenge that encourages people to build AGI.)
+The below sections describe our thought process and reasoning when building a lossless compression system specifically made for solving ARC-AGI. More details about eliciting intelligence from lossless compression can be found on the [about section of the Hutter Prize website](http://prize.hutter1.net/hfaq.htm#about). (The Hutter Prize is an information compression challenge that encourages people to build AGI.)
 
 #### A Game of Broken Telephone
 
@@ -133,7 +133,7 @@ Firstly, let's try to deduce what a reasonable strategy for Bob might be. Let's 
 
 Then when Alice sees the ARC-AGI dataset and needs to communicate it, her job is to write a short-as-possible decompression algorithm $x$, plus a code $z$, to minimize the total length of $x$ and $z$. Thus Bob can assume Alice is more likely to send simpler algorithms $x$ for decoding, and he can define a probability distribution $q$ over $(x, z)$ pairs that assigns a higher probability to shorter total lengths.[^2] Each $(x, z)$ pair describes a decompression algorithm and some compressed bits, but it also equivalently describes a potential ARC-AGI dataset that Bob decodes upon running $x$ on $z$. So, we will use $q$ to refer to both the distribution of $(\text{algorithm}, \text{compressed bits})$ pairs and a distribution of potential ARC-AGI datasets.
 
-Now let's figure out what Alice will do. Suppose Alice and Bob have discussed in advance about some probability distribution $q$. Once they are separated, Alice makes another probability distribution $p$ over the same space, and decides she wants Bob to draw a sample from $p$ (without necessarily knowing $p$). It turns out that Alice can make this happen by sending $KL(p||q)$ bits to Bob[^3], using a technique called [Relative Entropy Coding][https://arxiv.org/abs/2010.01185] (shown below)[^4].
+Now let's figure out what Alice will do. Suppose Alice and Bob have discussed in advance about some probability distribution $q$. Once they are separated, Alice makes another probability distribution $p$ over the same space, and decides she wants Bob to draw a sample from $p$ (without necessarily knowing $p$). It turns out that Alice can make this happen by sending $KL(p||q)$ bits to Bob[^3], using a technique called [Relative Entropy Coding](https://arxiv.org/abs/2010.01185) (shown below)[^4].
 
 ![image](./resources/Relative_Entropy_Coding.png)
 
@@ -190,46 +190,46 @@ The above sections detail the reasoning behind this particular setup, and why we
 
 ## Architecture
 
-We designed our own neural network architecture to solve ARC-AGI via [[#TLDR; The Final Problem Setup|the problem setup above]].
+We designed our own neural network architecture to solve ARC-AGI via [the problem setup above](#tldr-the-final-problem-setup).
 
 ![image](./resources/Architecture_Overview.png)
 
 Components:
 - Begin with posterior distribution $p$,
-- [[#Decoding Layer]]
+- [Decoding Layer](#decoding-layer)
 - 4x
-	- [[#Multitensor Communication Layer|Multitensor Communication Layer, Upwards]]
-	- [[#Softmax Layer]]
-	- [[#Directional Cummax/Shift Layer|Directional Cummax Layer]]
-	- [[#Directional Cummax/Shift Layer|Directional Shift Layer]]
-	- [[#Directional Communication Layer]]
-	- [[#Nonlinear Layer]]
-	- [[#Multitensor Communication Layer|Multitensor Communication Layer, Downwards]]
-	- [[#Normalization Layer]]
-- [[#Linear Heads]]
+	- [Multitensor Communication Layer, Upwards](#multitensor-communication-layer)
+	- [Softmax Layer](#softmax-layer)
+	- [Directional Cummax Layer](#directional-cummaxshift-layer)
+	- [Directional Shift Layer](#directional-cummaxshift-layer)
+	- [Directional Communication Layer](#directional-communication-layer)
+	- [Nonlinear Layer](#nonlinear-layer)
+	- [Multitensor Communication Layer, Downwards](#multitensor-communication-layer)
+	- [Normalization Layer](#normalization-layer)
+- [Linear Heads](#linear-heads)
 
 The fundamental data format passed between the layers of our architecture is something we will call a "multitensor". **In order to understand any of the layers listed above, you must first read the below section on multitensors.**
 
 #### Multitensors
 
-Most common classes of machine learning architectures operate on a single type of tensor with constant rank. LLMs operate on rank 3 tensors of shape $[n\_batch, n\_tokens, n\_channels]$, and CNNs operate on a rank 4 tensors of shape $[n\_batch, n\_channels, height, width]$. Our multitensors are a set of varying-rank tensors of unique type, whose dimensions are a subset of a rank 6 tensor of shape $[n\_examples, n\_colors, n\_directions, height, width, n\_channels]$. We always keep the channel dimension, so there are at most 32 tensors in every multitensor. We also maintain [[#Rules for legal multitensors|several rules]] that determine whether a tensor shape is "legal" or not, which reduces the number of tensors in a multitensor to 18.
+Most common classes of machine learning architectures operate on a single type of tensor with constant rank. LLMs operate on rank 3 tensors of shape $[n\_batch, n\_tokens, n\_channels]$, and CNNs operate on a rank 4 tensors of shape $[n\_batch, n\_channels, height, width]$. Our multitensors are a set of varying-rank tensors of unique type, whose dimensions are a subset of a rank 6 tensor of shape $[n\_examples, n\_colors, n\_directions, height, width, n\_channels]$. We always keep the channel dimension, so there are at most 32 tensors in every multitensor. We also maintain [several rules](#rules-for-legal-multitensors) that determine whether a tensor shape is "legal" or not, which reduces the number of tensors in a multitensor to 18.
 
 | Dimension | Size                                                                                                                             |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Example   | Number of examples in the ARC-AGI task                                                                                           |
-| Color     | Number of unique colors in the ARC-AGI task, [[Special treatment of the black color\|not including black]]                       |
+| Color     | Number of unique colors in the ARC-AGI task, [not including black](#number-of-colors)                                            |
 | Direction | 8                                                                                                                                |
-| Height    | [[#Output Shape Determination\|Determined by preprocessing]]                                                                     |
-| Width     | [[#Output Shape Determination\|Determined by preprocessing]]                                                                     |
+| Height    | [Determined by preprocessing](#output-shape-determination)                                                                       |
+| Width     | [Determined by preprocessing](#output-shape-determination)                                                                       |
 | Channel   | In the residual connections, the size is 8 if the direction dimension is included, else 16. Within layers it is layer-dependent. |
 
 ![image](./resources/Multitensor.png)
 
-To give an idea of how a multitensor stores data, an ARC-AGI task can be represented by using the $[examples, colors, height, width, channel]$ tensor, by using the channel dimension to select either the input or output grid, and the width/height dimensions for pixel location, a one hot vector in the color dimension, specifying what color that pixel is. The $[examples, width, channel]$ and $[examples, height, channel]$ tensors can similarly be used to store masks representing grid shapes for every example for every input/output grid. All those tensors are included in a single multitensor that is computed by the network just before the final [[#Linear Heads|linear heads]] layer.
+To give an idea of how a multitensor stores data, an ARC-AGI task can be represented by using the $[examples, colors, height, width, channel]$ tensor, by using the channel dimension to select either the input or output grid, and the width/height dimensions for pixel location, a one hot vector in the color dimension, specifying what color that pixel is. The $[examples, width, channel]$ and $[examples, height, channel]$ tensors can similarly be used to store masks representing grid shapes for every example for every input/output grid. All those tensors are included in a single multitensor that is computed by the network just before the final [linear heads](#linear-heads) layer.
 
 Some layers require an object for every tensor in a multitensor, so when talking about sets of objects all corresponding to the same multitensor, we may use the prefix "multi". For example, we may say "multiweights" when talking about using a linear layer with separate weights for every tensor in a multitensor.
 
-When we apply an operation on a multitensor, we by default assume that all non-channel dimensions are treated identically as batch dimensions by default. The operation is copied across the indices of dimensions unless specified. For example, we will see later that the [[#Directional Cummax/Shift Layer|directional shift layer]] treats the example and color dimensions as batch dimensions, as it operates using the rest of the dimensions.
+When we apply an operation on a multitensor, we by default assume that all non-channel dimensions are treated identically as batch dimensions by default. The operation is copied across the indices of dimensions unless specified. For example, we will see later that the [directional shift layer](#directional-cummaxshift-layer) treats the example and color dimensions as batch dimensions, as it operates using the rest of the dimensions.
 
 Usually when talking about a tensor's shape, we will not mention the channel dimension as it is included by default.
 
@@ -276,7 +276,7 @@ For the cumulative max but not the shift, the slices are rescaled to have min $-
 
 #### Directional Communication Layer
 
-The directional communication layers allow the network to make use of relationships between directions. It provides a way for tensors that have direction-specific information to send information between two slices in the direction dimension, dependent on the angular difference the slices represent. This layer defines a separate linear map to be used for each of the 64 possible combinations of angles, but the weights of the linear maps are minimally tied such that the directional communication layer is equivariant to reflections and rotations (given that the indices of the direction dimension also permute accordingly). Sometimes, this also means that [[#Weight Tying for Reflection/Rotation Symmetry|weights for different tensors in the multitensor are tied together as well]]. Every direction slice in a tensor accumulates 8 messages, and adds the results together.[^16]
+The directional communication layers allow the network to make use of relationships between directions. It provides a way for tensors that have direction-specific information to send information between two slices in the direction dimension, dependent on the angular difference the slices represent. This layer defines a separate linear map to be used for each of the 64 possible combinations of angles, but the weights of the linear maps are minimally tied such that the directional communication layer is equivariant to reflections and rotations (given that the indices of the direction dimension also permute accordingly). Sometimes, this also means that [weights for different tensors in the multitensor are tied together as well](#weight-tying-for-reflectionrotation-symmetry). Every direction slice in a tensor accumulates 8 messages, and adds the results together.[^16]
 
 The directional communication layers of channel dimension of 2 are surrounded by down- and up- multiprojections, pre-norm, and a residual connection.
 
@@ -305,7 +305,7 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 [^10]: The actual information content, which the layer computes later on, will be slightly different because of the per-element capacity adjustments.
 [^11]: Means are initialized using normal distribution of variance $10^{-4}$.
 [^12]: Means and variances for normalization are computed along all non-channel dimensions.
-[^13]: There are many caveats with the way this is implemented and how it works; please refer to the [[#Code|code]] if you want more details.
+[^13]: There are many caveats with the way this is implemented and how it works; please refer to the [code](#code) if you want more details.
 [^14]: We are careful not to let the postprocessing operation, which contains unbounded amounts of information via the signal-to-noise ratios, to leak lots of information across the layer. We only let a bit of it leak by averaging the signal-to-noise ratios across individual tensors in the multitensor.
 [^15]: One exception: we always include the example dimension in the subset of dimensions.
 [^16]: We also multiply the results by coefficients depending on the angle: 1 for 0 degrees and 180 degrees, 0.2 for 45 degrees and 135 degrees, and 0.4 for 90 degrees.
@@ -363,34 +363,34 @@ In general, the network is able to extend patterns for short ranges but not long
 ![image](./resources/28e73c20_solutions.png)
 
 A short list of abilities that can be performed by our network includes:
-- Assigning individual colors to individual procedures (see problem [[#List of Mentioned ARC-AGI Tasks|0ca9ddb6]])
-- Infilling (see problem [[#List of Mentioned ARC-AGI Tasks|0dfd9992]])
-- Cropping (see problem [[#List of Mentioned ARC-AGI Tasks|1c786137]])
-- Connecting dots with lines, including 45 degree diagonal lines (see problem [[#List of Mentioned ARC-AGI Tasks|1f876c06]])
-- Same color detection (see problem [[#List of Mentioned ARC-AGI Tasks|1f876c06]])
-- Identifying pixel adjacencies (see problem [[#List of Mentioned ARC-AGI Tasks|42a50994]])
-- Assigning individual colors to individual examples (see problem [[#List of Mentioned ARC-AGI Tasks|3bd67248]])
-- Identifying parts of a shape (see problem [[#List of Mentioned ARC-AGI Tasks|025d127b]])
-- Translation by short distances (see problem [[#List of Mentioned ARC-AGI Tasks|025d127b]])
+- Assigning individual colors to individual procedures (see problem [0ca9ddb6](#list-of-mentioned-arc-agi-tasks))
+- Infilling (see problem [0dfd9992](#list-of-mentioned-arc-agi-tasks))
+- Cropping (see problem [1c786137](#list-of-mentioned-arc-agi-tasks))
+- Connecting dots with lines, including 45 degree diagonal lines (see problem [1f876c06](#list-of-mentioned-arc-agi-tasks))
+- Same color detection (see problem [1f876c06](#list-of-mentioned-arc-agi-tasks))
+- Identifying pixel adjacencies (see problem [42a50994](#list-of-mentioned-arc-agi-tasks))
+- Assigning individual colors to individual examples (see problem [3bd67248](#list-of-mentioned-arc-agi-tasks))
+- Identifying parts of a shape (see problem [025d127b](#list-of-mentioned-arc-agi-tasks))
+- Translation by short distances (see problem [025d127b](#list-of-mentioned-arc-agi-tasks))
 
 A short list of abilities that cannot be performed by our network includes:
-- Assigning two colors to each other (see problem [[#List of Mentioned ARC-AGI Tasks|0d3d703e]])
-- Repeating an operation in series many times (see problem [[#List of Mentioned ARC-AGI Tasks|0a938d79]])
-- Counting/numbers (see problem [[#List of Mentioned ARC-AGI Tasks|ce9e57f2]])
-- Translation, rotation, reflections, rescaling, image duplication (see problems [[#List of Mentioned ARC-AGI Tasks|0e206a2e]], [[#List of Mentioned ARC-AGI Tasks|5ad4f10b]], and [[#List of Mentioned ARC-AGI Tasks|2bcee788]])
-- Detecting topological properties such as connectivity (see problem [[#List of Mentioned ARC-AGI Tasks|7b6016b9]])
-- Planning, simulating the behavior of an agent (see problem [[#List of Mentioned ARC-AGI Tasks|2dd70a9a]])
+- Assigning two colors to each other (see problem [0d3d703e](#list-of-mentioned-arc-agi-tasks))
+- Repeating an operation in series many times (see problem [0a938d79](#list-of-mentioned-arc-agi-tasks))
+- Counting/numbers (see problem [ce9e57f2](#list-of-mentioned-arc-agi-tasks))
+- Translation, rotation, reflections, rescaling, image duplication (see problems [0e206a2e](#list-of-mentioned-arc-agi-tasks), [5ad4f10b](#list-of-mentioned-arc-agi-tasks), and [2bcee788](#list-of-mentioned-arc-agi-tasks))
+- Detecting topological properties such as connectivity (see problem [7b6016b9](#list-of-mentioned-arc-agi-tasks))
+- Planning, simulating the behavior of an agent (see problem [2dd70a9a](#list-of-mentioned-arc-agi-tasks))
 - Long range extensions of patterns (see problem 28e73c20 above)
 
 #### Seed Dependence
 
-While developing and testing the layers of our network, we found that in some runs, a task would never be solved even after 2000 iterations might easily be solved in 300 iterations after rerunning the same code (eg. we saw this extensively in task [[#Case Study: Problem 272f95fa|272f95fa]]). This makes us wonder how many of the tasks are solved consistently and how many are lucky breaks.
+While developing and testing the layers of our network, we found that in some runs, a task would never be solved even after 2000 iterations might easily be solved in 300 iterations after rerunning the same code (eg. we saw this extensively in task [272f95fa](#case-study-problem-272f95fa)). This makes us wonder how many of the tasks are solved consistently and how many are lucky breaks.
 
 So, we re-ran the training set and found the following overlap of solved tasks:
 
 TODO venn diagram of solved tasks. Do for @1, do for @2.
 
-We can also create an improved model by training two models in parallel and [[#Postprocessing|selecting the top k solutions found]] for our top-k accuracy. This indeed gives us a better performance at TODO% on the training set, for twice the training time:
+We can also create an improved model by training two models in parallel and [selecting the top k solutions found](#postprocessing) for our top-k accuracy. This indeed gives us a better performance at TODO% on the training set, for twice the training time:
 
 ![image](./resources/accuracy_curve_at_n_TODO.png)
 
@@ -415,7 +415,7 @@ The directional layers may seem overengineered, and they have little in the way 
 - Some abilities of our network disappear, namely the ones that require on row/column ordering to be well defined. Eg. Infilling, connecting dots with lines, pixel adjacencies.
 - Abilities that remain sensible when rows and columns are permuted are unaffected.
 
-To test the effects of directional layers, we removed the directional layers and changed the multitensor definition to make tensors with a direction axis [[#Rules for legal multitensors|illegal]], and re-ran training. Below are three tasks that can still be solved,
+To test the effects of directional layers, we removed the directional layers and changed the multitensor definition to make tensors with a direction axis [illegal](#rules-for-legal-multitensors), and re-ran training. Below are three tasks that can still be solved,
 
 | TODO problem+solution | TODO problem+solution | TODO problem+solution |
 | --------------------- | --------------------- | --------------------- |
@@ -483,10 +483,10 @@ During training, the reconstruction error fell extremely quickly. It remained lo
 
 So how does the network learn to solve the task? Let's look at the representations stored in $z$ to find out.
 
-Since $z$ is a [[#Multitensors|multitensor]], each of the tensors it contains produces an additive contribution to the total KL for $z$. By looking at the per-tensor contributions, we can determine which tensors in $z$ code for information that is used to represent the ARC-AGI task. Below is a plot showing the quantity of information stored in each tensor of $z$, ie. the KL contribution used by the [[#Decoding Layer|decoding layer]].
+Since $z$ is a [multitensor](#multitensors), each of the tensors it contains produces an additive contribution to the total KL for $z$. By looking at the per-tensor contributions, we can determine which tensors in $z$ code for information that is used to represent the ARC-AGI task. Below is a plot showing the quantity of information stored in each tensor of $z$, ie. the KL contribution used by the [decoding layer](#decoding-layer).
 
 ![image](./resources/272f95fa_KL_components.png)
-All the tensors fall to zero information content during training, except for four tensors. In some replications of this experiment, we saw one of these four necessary tensors fall to zero information content, and the network typically does not recover the correct solution after that. Here we are showing a lucky run where the $(color, direction, channel)$ tensor almost falls but gets picked up 200 steps in, which is right around when the samples from the model begin to show the correct colors in the correct boxes. We can look at the average output of the [[#Decoding Layer|decoding layer]] for these tensors to see what information is stored there.
+All the tensors fall to zero information content during training, except for four tensors. In some replications of this experiment, we saw one of these four necessary tensors fall to zero information content, and the network typically does not recover the correct solution after that. Here we are showing a lucky run where the $(color, direction, channel)$ tensor almost falls but gets picked up 200 steps in, which is right around when the samples from the model begin to show the correct colors in the correct boxes. We can look at the average output of the [decoding layer](#decoding-layer) for these tensors to see what information is stored there.
 
 ###### (Examples, height, channel) tensor:
 For every example and row, there is a vector of dimension $n\_channels$. This forms a dataset of vectors. Taking the PCA of these vectors, the top principal component can tell us which examples/row combinations are uniquely identified by the stored information.
@@ -516,7 +516,7 @@ At the time of release of this project, there were several ideas which we though
 
 #### Joint Compression via Weight Sharing Between Problems
 
-Our current system tries to solve each problem serially by compressing each problem on its own. We believe that joint compression of all the entire ARC-AGI dataset at once should yield better learned inductive biases per-problem, since computations learned for one problem can be transferred to other problems. We do not account for the size of $x$ in our [[#So what strategy will Alice and Bob use?|problem formulation]], allowing for $x$ to be used for memorization/overfitting. By jointly compressing the whole dataset, we only need to have one $x$, whereas when compressing each problem individually, we need to have an $x$ for every problem, allowing for more memorization/overfitting.
+Our current system tries to solve each problem serially by compressing each problem on its own. We believe that joint compression of all the entire ARC-AGI dataset at once should yield better learned inductive biases per-problem, since computations learned for one problem can be transferred to other problems. We do not account for the size of $x$ in our [problem formulation](#so-what-strategy-will-alice-and-bob-use), allowing for $x$ to be used for memorization/overfitting. By jointly compressing the whole dataset, we only need to have one $x$, whereas when compressing each problem individually, we need to have an $x$ for every problem, allowing for more memorization/overfitting.
 
 To implement this, we would most likely explore strategies like:
 - Using the same network weights for all problems, and training problems in parallel. Each problem gets assigned some perturbation to the weights, that is constrained in some way.
@@ -541,11 +541,11 @@ Convolutions, when repeated with some grids flipped by 180 degrees, tend to crea
 
 We noticed during testing that crucial posterior tensors whose [KL fell to zero during learning](https://arxiv.org/abs/1711.00937) would never make a recovery and play their role in the encoding. We believe that the KL divergence may upper bound the information content of the gradient training signal for parts of the network that process the encoded information. Thus, when a tensor falls to zero KL, the network stops learning to use its information, so the KL is no longer given encouragement to recover. If we can hold the KL above zero for a while, the network may then learn to use the information, giving the KL a reason to stay above zero when released again.
 
-We implemented a mechanism to keep the KL above a minimum threshold so that the network always learns to use that information, but we do not believe it learns fast enough for this to be useful, as we have never seen a tensor recover before. Therefore, it might be useful to explore different ways to schedule this KL floor to start high and decay to zero, to allow learning when the KL is forced to be high, and to leave the KL unaffected later on in learning. This might cause [[#Seed Dependence|training results to be more consistent across runs]].
+We implemented a mechanism to keep the KL above a minimum threshold so that the network always learns to use that information, but we do not believe it learns fast enough for this to be useful, as we have never seen a tensor recover before. Therefore, it might be useful to explore different ways to schedule this KL floor to start high and decay to zero, to allow learning when the KL is forced to be high, and to leave the KL unaffected later on in learning. This might cause [training results to be more consistent across runs](#seed-dependence).
 
 #### Regularization
 
-We don't use it, but maybe it would help. Regularization is a rudimentary form of measuring the complexity of $x$ in our [[#So what strategy will Alice and Bob use?|problem formulation]].
+We don't use it, but maybe it would help. Regularization is a rudimentary form of measuring the complexity of $x$ in our [problem formulation](#so-what-strategy-will-alice-and-bob-use).
 
 
 ---
@@ -562,13 +562,13 @@ The Hutter Prize leads down a long rabbit hole. Ideally, the solution to any pre
 
 Since we build a compressor, we make use of many results in information theory and coding theory. The main result required to motivate our model architecture is the existence of [Relative Entropy Coding](https://arxiv.org/abs/2010.01185) (REC). The fact that REC exists means that as long as a KL divergence can be bounded, the construction of a compression algorithm an be abstracted away. Thus, problems about coding theory and translating into binary and back can be ignored, and we only need to do information theory to get the job done. While the existence of [arithmetic coding](https://en.wikipedia.org/wiki/Arithmetic_coding) would suffice when distributions are discrete, neural networks operate in a continuous space so we need the existence of REC instead.
 
-Our architecture sends $z$ information through an additive white Gaussian noise (AWGN) channel, so the [AWGN channel capacity formula](https://en.wikipedia.org/wiki/Shannon%E2%80%93Hartley_theorem) (Gaussian input Gaussian noise) plays a heavy role in the design of our [[#Decoding Layer|decoding layer]].
+Our architecture sends $z$ information through an additive white Gaussian noise (AWGN) channel, so the [AWGN channel capacity formula](https://en.wikipedia.org/wiki/Shannon%E2%80%93Hartley_theorem) (Gaussian input Gaussian noise) plays a heavy role in the design of our [decoding layer](#decoding-layer).
 
 #### Variational Autoencoders
 
 The decoder side of the [variational autoencoder](https://arxiv.org/abs/1312.6114) (VAE) serves as the decompression algorithm. While we would use something that has more general capabilities like a [neural Turing machine instead](https://arxiv.org/abs/1410.5401), neural Turing machines are not very amenable to gradient descent-based optimization so we stuck with the VAE.
 
-VAEs have a long history of developments that are relevant to our work. At one point, we tried using multiple [[#Decoding Layer|decoding layers]] to make a [hierarchical VAE](https://arxiv.org/abs/1602.02282) decoder instead. This does not affect Relative Entropy Coding with the AWGN channel because [channel capacity with feedback is equal to channel capacity without feedback](https://ieeexplore.ieee.org/document/1056798). But, we found empirically that the first decoding layer would absorb all of the KL contribution, making the later decoding layers useless. Thus, we only used one decoding layer at the beginning.
+VAEs have a long history of developments that are relevant to our work. At one point, we tried using multiple [decoding layers](#decoding-layer) to make a [hierarchical VAE](https://arxiv.org/abs/1602.02282) decoder instead. This does not affect Relative Entropy Coding with the AWGN channel because [channel capacity with feedback is equal to channel capacity without feedback](https://ieeexplore.ieee.org/document/1056798). But, we found empirically that the first decoding layer would absorb all of the KL contribution, making the later decoding layers useless. Thus, we only used one decoding layer at the beginning.
 
 The [beta-VAE](https://openreview.net/forum?id=Sy2fzU9gl) introduces a reweighting of the reconstruction loss to be stronger than the KL loss, and we found that to work well in our case. The [NVAE](https://arxiv.org/abs/2007.03898) applies a non-constant weighting to loss components. A rudimentary form of scheduled loss aggregation is used in our work.
 
@@ -586,7 +586,7 @@ Out of all these past methods, we believe ours has been the only method so far t
 
 We designed our own VAE decoder architecture from scratch, but not without borrowing crucial design principles from many others.
 
-Our architecture is fundamentally structured like a [transformer](https://arxiv.org/abs/1706.03762), consisting of a [residual stream](https://arxiv.org/abs/1512.03385) where representations are stored and operated upon, followed by a linear head. [Pre-and post-norms](https://arxiv.org/abs/2002.04745) with linear up- and down-projections allow layers to read and write to the residual stream. The [SiLU](https://arxiv.org/abs/1606.08415)-based [[#Nonlinear Layer|nonlinear layer]] is especially similar to a transformer's.
+Our architecture is fundamentally structured like a [transformer](https://arxiv.org/abs/1706.03762), consisting of a [residual stream](https://arxiv.org/abs/1512.03385) where representations are stored and operated upon, followed by a linear head. [Pre-and post-norms](https://arxiv.org/abs/2002.04745) with linear up- and down-projections allow layers to read and write to the residual stream. The [SiLU](https://arxiv.org/abs/1606.08415)-based [nonlinear layer](#nonlinear-layer) is especially similar to a transformer's.
 
 Our equivariance structures are inspired by [permutation-invariant neural networks](https://arxiv.org/abs/1703.06114), which are a type of [equivariant neural network](https://arxiv.org/abs/1602.07576). Equivariance transformations are taken from common augmentations to ARC-AGI problems.
 
@@ -617,21 +617,21 @@ Before doing any training, we determine whether the given ARC-AGI problem follow
 2. All the inputs in the given ARC-AGI problem are the same shape.
 3. All the outputs in the given ARC-AGI problem are the same shape.
 
-Based on rules 1 and 3, we try to predict the shape of held-out outputs, prioritizing rule 1 over rule 3. If either rule holds, we force the postprocessing step to only consider the predicted shape by overwriting the masks produced by the [[#Linear Heads|linear heads]]. If neither rule holds, we make a temporary prediction of the largest width and height out of the grids in the given ARC-AGI problem, and we allow the masks to predict shapes that are smaller than that.
+Based on rules 1 and 3, we try to predict the shape of held-out outputs, prioritizing rule 1 over rule 3. If either rule holds, we force the postprocessing step to only consider the predicted shape by overwriting the masks produced by the [linear heads](#linear-heads). If neither rule holds, we make a temporary prediction of the largest width and height out of the grids in the given ARC-AGI problem, and we allow the masks to predict shapes that are smaller than that.
 
-The largest width and height that is given or predicted, are used as the size of the [[#Multitensors|multitensor]]'s width and height dimensions.
+The largest width and height that is given or predicted, are used as the size of the [multitensor](#multitensors)'s width and height dimensions.
 
-The predicted shapes are also used as masks when performing the [[#Multitensor Communication Layer|multitensor communication]], [[#Directional Communication Layer|directional communication]] and [[#Directional Cummax/Shift Layer|directional cummax/shift]] layers[^19]. We did not apply masks for the other layers because of time constraints and because we do not believe it will provide for much of a performance improvement.
+The predicted shapes are also used as masks when performing the [multitensor communication](#multitensor-communication-layer), [directional communication](#directional-communication-layer) and [directional cummax/shift](#directional-cummaxshift-layer) layers[^19]. We did not apply masks for the other layers because of time constraints and because we do not believe it will provide for much of a performance improvement.
 
 #### Number of Colors
 
-We notice that in almost all ARC-AGI tasks, colors that are not present in the problem are not present in the solution. Hence, any colors that do not appear in the ARC-AGI problem are not given an index in the color dimension of the [[#Multitensors|multitensor]].
+We notice that in almost all ARC-AGI tasks, colors that are not present in the problem are not present in the solution. Hence, any colors that do not appear in the ARC-AGI problem are not given an index in the color dimension of the [multitensor](#multitensors).
 
-In addition, black is treated as a special color that is never included in the multitensor, since it normally represents the background in many ARC-AGI tasks. When performing color classification, a tensor of zeros is appended to the color dimension after applying the [[#Linear Heads|linear head]], to represent logits for the black color.
+In addition, black is treated as a special color that is never included in the multitensor, since it normally represents the background in many ARC-AGI tasks. When performing color classification, a tensor of zeros is appended to the color dimension after applying the [linear head](#linear-heads), to represent logits for the black color.
 
 ## Postprocessing
 
-Postprocessing primarily deals with denoising the solutions sampled from the VAE. There are also [[#Linear Heads|some operations]] performed to convert the constant-shape grids outputted by the VAE to the variable shape grids present in some problems.
+Postprocessing primarily deals with denoising the solutions sampled from the VAE. There are also [some operations](#linear-heads) performed to convert the constant-shape grids outputted by the VAE to the variable shape grids present in some problems.
 
 Generally, when we sample solutions from the VAE by taking the logits of the $[examples, colors, height, width, channels]$ tensor and argmaxxing over the color dimension, we find that the grids are noisy and will often have the wrong colors for several random pixels. We developed several methods for removing this noise:
 1. Find the most commonly sampled solution.
@@ -694,7 +694,7 @@ The average of sampled outputs shows almost all of the pixels in the imaginary b
 ![image](./resources/6d75e8bb_KL_components.png)
 All the tensors fall to zero information content during training, except for three tensors. From 600-1000 steps, we see the $(example, height, width, channel)$ tensor suffer a massive drop in information content, with no change in the outputted solution. We believe it was being used to identify the light blue pixels in the input, but this information then got memorized by the nonlinear portions of the network, using the $(example, height, channel)$ and $(example, width, channel)$ as positional encodings.
 
-We can look at the average output of the [[#Decoding Layer|decoding layer]] for these tensors to see what information is stored there.
+We can look at the average output of the [decoding layer](#decoding-layer) for these tensors to see what information is stored there.
 
 ###### (Examples, height, channel) tensor:
 ![image](./resources/6d75e8bb_example_height_component_0.png)
@@ -770,7 +770,7 @@ If you'd like to cite this blog post, use the following entry:
 
 TODO: upload duplicated run results to repo. Do non-directional experiment.
 
-TODO: make sure links work.
+TODO: make sure links work. Click on all of them.
 TODO: fix the list numbering
 TODO: blog post citation bibtex url
 TODO: test installation instructions once public
