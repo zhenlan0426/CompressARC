@@ -456,31 +456,31 @@ Let's demonstrate the inner workings of our model using an example ARC-AGI task.
 
 #### After 50 steps of training:
 
-![image](./resources/272f95fa_at_50 steps.png)
+![image](./resources/272f95fa_at_50_steps.png)
 
 The network outputs a solution that has two rows and columns highlighted in blue, in the same place where the input has rows and columns in blue. This is probably because the network has noticed that all the other given input/output pairs have this correspondence. The network doesn't know how the other pixels are assigned their colors, as can be observed from the random coloring of remaining pixels in the sample. The sample average shows the network assigns mostly the same average color to non-light-blue pixels.
 
 #### After 150 steps of training:
 
-![image](./resources/272f95fa_at_150 steps.png)
+![image](./resources/272f95fa_at_150_steps.png)
 
 The sample shows nearby pixels being similar colors. The network has likely noticed that this is a common property among all the outputs, and is guessing that it applies to the held-out output too.
 
 #### After 200 steps of training:
 
-![image](./resources/272f95fa_at_200 steps.png)
+![image](./resources/272f95fa_at_200_steps.png)
 
 The sample now shows colors that are uniform(ish) within boxes outlined by the light blue borders, and the color consistency among nearby pixels ends at these borders. The network has noticed the common usage of borders to delineate colors in other outputs, and applies the same logic here. The network has also realized that all of the given outputs have black corner sections, so the sample now shows the same.
 
 #### After 350 steps of training:
 
-![image](./resources/272f95fa_at_350 steps.png)
+![image](./resources/272f95fa_at_350_steps.png)
 
 The sample now shows the correct colors assigned to boxes of the correct direction relative to the center box. The network has realized that the same color-to-direction mapping is used to pick the colors of boxes in all the other outputs, so it uses the same mapping here. It is still not the best at coloring within the lines, and also messes up the center box, as the middle does not correspond to a direction. Nonetheless, the sample average does show a tinge of the correct magenta color in the middle, indicating that the network is catching on. The postprocessing/guessing mechanism has picked from the network a solution with magenta in the middle.
 
 #### After 1500 steps of training:
 
-![image](./resources/272f95fa_at_1500 steps.png)
+![image](./resources/272f95fa_at_1500_steps.png)
 
 The network is as refined as it will ever be. Sometimes it will still make a mistake in the sample it outputs, but this is easily recognized as noise by the postprocessing/guessing mechanism.
 
@@ -550,9 +550,13 @@ This one is more ARC-AGI-specific and may have less to do with AGI in our view. 
 There are several issues with introducing a convolutional operation for the network to use. Ideally, we would read two grids via projection from the residual stream, convolve them, and write it back in via another projection, with norms in the right places and such. Ignoring the fact that the grid size changes during convolution (can be solved with two parallel networks using different grid sizes), the bigger problem is that convolutions tend to amplify noise in the grids much more than the sparse signals, so their inductive bias is not good for shape copying. We can try to apply a softmax to one or both of the grids to reduce the noise (and to draw an interesting connection to attention), but we didn't find any success.
 
 The last idea that we were tried before discarding the idea was to modify the functional form of the convolution:
+
 $$(f * g)(x) = \sum_y f(x-y)g(y)$$
+
 to [a tropical convolution](https://arxiv.org/abs/2103.02096), which we found to work well on toy tasks, but not well enough for ARC-AGI training set tasks (which is why we discarded this idea):
+
 $$(f*g)(x) = \max_y f(x-y) + g(y)$$
+
 Convolutions, when repeated with some grids flipped by 180 degrees, tend to create high activations at the center pixel, so sometimes it is important to zero out the center pixel to preserve the signal.
 
 #### KL Floor for Posterior Collapse
@@ -675,11 +679,11 @@ Our mental model of how gradient descent compresses the $z$ information consists
 2. The posterior widens and becomes more noisy to try to get closer to the wide Gaussian prior $q$, but since all $n$ pieces of information are needed to ensure good reconstruction, the noise is limited by the reconstruction loss incurred.
 3. The ever-widening posteriors push the neurons to become more and more resilient to noise, until some limit is reached.
 4. Learning remains stagnant for a while, as a stalemate between compression and reconstruction.
-5. If it turns out that $x_1$ is reconstructible using $x_2, \dots, x_n$, then
-	6. The neurons, pushed by the widening posterior of $x_1$, figure out a procedure to denoise $x_1$ using information from $x_2, \dots, x_n$, in the event that the noise sample for $x_1$ is too extreme.
-	7. The posterior for the last piece keeps pushing wider, producing more extreme values for $x_1$, and the denoising procedure is improved, until the $x_1$ representation consists completely of noise, and its usage in the network is replaced by the output of the denoising procedure.
-	8. The posterior for $x_1$ is now identical to the prior, so nothing is coded in $x_1$ and it no longer contributes to the KL loss.
-	9. The posterior now codes for $n-1$ pieces of information $x_2, \dots, x_n$, and compression has occurred.
+5. If it turns out that $x_1$ is not reconstructible using $x_2, \dots, x_n$, then stop. Else, proceed to step 6.
+6. The neurons, pushed by the widening posterior of $x_1$, figure out a procedure to denoise $x_1$ using information from $x_2, \dots, x_n$, in the event that the noise sample for $x_1$ is too extreme.
+7. The posterior for the last piece keeps pushing wider, producing more extreme values for $x_1$, and the denoising procedure is improved, until the $x_1$ representation consists completely of noise, and its usage in the network is replaced by the output of the denoising procedure.
+8. The posterior for $x_1$ is now identical to the prior, so nothing is coded in $x_1$ and it no longer contributes to the KL loss.
+9. The posterior now codes for $n-1$ pieces of information $x_2, \dots, x_n$, and compression has occurred.
 
 These steps happen repeatedly for different unnecessarily coded pieces of information, until there are no more. More than one piece of information can be compressed away at once, and there is no need for the steps to proceed serially. The process stops when all information coded by the posterior is unique, and no piece is reconstructable using the others.
 
@@ -697,19 +701,19 @@ Problem 6d75e8bb is part of the training split.
 
 ##### After 50 steps of training:
 
-![image](./resources/6d75e8bb_at_50 steps.png)
+![image](./resources/6d75e8bb_at_50_steps.png)
 
 The average of sampled outputs shows that light blue pixels in the input are generally preserved in the output. However, black pixels in the input are haphazardly and randomly colored light blue and red. The network does not seem to know that the colored input/output pixels lie within some kind of bounding box, or that the bounding box is the same for the input and output grids.
 
 ##### After 100 steps of training:
 
-![image](./resources/6d75e8bb_at_100 steps.png)
+![image](./resources/6d75e8bb_at_100_steps.png)
 
 The average of sampled outputs shows red pixels confined to an imaginary rectangle surrounding the light blue pixels. The network seems to have perceived that other examples use a common bounding box for the input and output pixels, but is not completely sure about where the boundary lies and what colors go inside the box in the output.
 
 ##### After 150 steps of training:
 
-![image](./resources/6d75e8bb_at_150 steps.png)
+![image](./resources/6d75e8bb_at_150_steps.png)
 
 The average of sampled outputs shows almost all of the pixels in the imaginary bounding box to be colored red. The network has figured out the solution, and further training only refines the solution.
 
@@ -747,7 +751,7 @@ Problem 41e4d17e is part of the training split.
 
 Solution from our network:
 
-![image](./resources/41e4d17e_at_1500 steps.png)
+![image](./resources/41e4d17e_at_1500_steps.png)
 
 #### Solution Analysis (Problem 41e4d17e)
 
@@ -807,10 +811,8 @@ If you'd like to cite this blog post, use the following entry:
 
 
 TODO: upload duplicated run results to repo. Do non-directional experiment.
-TODO: fix case study image rendering
 
 TODO: make sure links work. Click on all of them.
-TODO: fix the list numbering
 TODO: blog post citation bibtex url
 TODO: test installation instructions once public
 TODO: update release date
