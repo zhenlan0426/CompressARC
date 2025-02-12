@@ -66,11 +66,11 @@ Our conclusion: even without any external pretraining or large-scale search, los
 8. [Appendix](#appendix)
 	- [Rules for legal multitensors](#rules-for-legal-multitensors)
 	- [Weight Tying for Reflection/Rotation Symmetry](#weight-tying-for-reflectionrotation-symmetry)
+	- [Training](#training)
 	- [Preprocessing](#preprocessing)
 		- [Output Shape Determination](#output-shape-determination)
 		- [Number of Colors](#number-of-colors)
 	- [Postprocessing](#postprocessing)
-	- [Training](#training)
 	- [What Happens to the Representations during Learning](#what-happens-to-the-representations-during-learning)
 	- [Additional Case Studies](#additional-case-studies)
 		- [Case Study Problem 6d75e8bb](#case-study-problem-6d75e8bb)
@@ -90,7 +90,7 @@ So what do we mean when we say that "the ability to losslessly compress informat
 
 **In short, we believe that lossless compression schemes can be converted into programs for solving ARC-AGI, and the more bit-efficient the compression scheme, the "smarter" the solver program and the more likely it is to give correct solutions.** To use a compressor as an ARC-AGI solver, we figure out the solution grid that when put together with the problem grids, makes the whole task come out to the smallest possible compressed code length. The main challenge is to find a compression scheme that allows for finding this "best solution grid", while maintaining strong bit-efficiency. [We will later find](#tldr-the-final-problem-setup) that a variational autoencoder serves this purpose very well; the compressed code length is equivalent to the loss, and the process of compression is equivalent to training.
 
-#### Compression Leads to Intelligence
+### Compression Leads to Intelligence
 
 Let's restrict "intelligence" to mean "the ability to make decent predictions of unknowns that are determined by complicated mechanisms", for the purposes of this project. This includes the ability to identify and exploit patterns in data for increasing prediction accuracy. In the case of ARC-AGI, an intelligent system would make decent predictions of problem solutions, by identifying and exploiting any complicated input-output mapping rules that it can find and apply to a given problem.
 
@@ -102,7 +102,7 @@ So why is compression sufficient to produce intelligence? Suppose there is a dat
 
 The below sections describe our thought process and reasoning when building a lossless compression system specifically made for solving ARC-AGI. More details about eliciting intelligence from lossless compression can be found on the [about section of the Hutter Prize website](http://prize.hutter1.net/hfaq.htm#about). (The Hutter Prize is an information compression challenge that encourages people to build AGI.)
 
-#### A Game of Broken Telephone
+### A Game of Broken Telephone
 
 To make the paradigm of information compression easier to understand, we will describe how we think about ARC-AGI in terms of a communication game. From this point on, we will presume some prior knowledge about information/communications theory, eg. KL divergences.
 
@@ -123,7 +123,7 @@ Let's say that Alice and Bob are proficient at this game, and they use nearly op
 
 The underlying assumption for our solution to ARC-AGI, is that the held-out solutions that Bob will end up reconstructing, will then be the correct solutions to ARC-AGI. If we can understand the game well enough to find Bob's reconstructions, even without having to solve the rest of the game, then we can solve ARC-AGI.
 
-#### So what strategy will Alice and Bob use?
+### So what strategy will Alice and Bob use?
 
 We can figure out what Bob does first, then we will describe how Alice will behave.
 
@@ -141,7 +141,7 @@ Knowing that this is possible, we will presume that Alice and Bob will use the f
 1. Alice and Bob agree on a distribution of ARC-AGI datasets $q$. When Alice is given the actual ARC-AGI problems, she makes a delta distribution on her observed problems. She then picks a distribution of solutions and combines it with the delta distribution to make a distribution $p$ of ARC-AGI datasets. Even though in the $(problem, solution)$ viewpoint $p$ looks like a delta distribution with some other distribution, Alice will be picking the solution distribution by looking from the $(x, z)$ viewpoint where things are much more complicated. She sends a sample from $p$ to Bob, for a cost of $KL(p||q)$, and Bob decodes the ARC-AGI dataset where all the problems are the same as what Alice saw. But Bob will also get solutions drawn from $p$ as a side effect, and these solutions depend on what $(x, z)$ distribution Alice picks.
 2. To minimize the KL, Alice realizes that minimizing $KL(p||q)$ is roughly equivalent to minimizing the average total lengths of $x$ and $z$ that she makes $p$ with, since $q$ is weighted to prefer short total lengths. Alice must then figure out what decompression algorithm $x$ and compressed bits $z$ are most efficient to get Bob to correctly decode the ARC-AGI dataset problems she sees. Optimally, Alice must pick the solution distribution to be the conditional distribution $q(\text{solutions}|\text{given problems})$ when she constructs $p$. If Alice can't figure this out exactly and ends up with $q'(\text{solutions}|\text{given problems})$ instead, she will end up constructing a distribution $p$ that incurs an extra KL cost of $KL(q'(\cdot|\text{given problem})|q(\cdot|\text{given problem}))$ on top, which in turn translates to the number of excess bits in the total length of $x$ and $z$. When the conditional distribution $q(\text{solutions}|\text{given problems})$ can't be computed, Alice will still focus on minimizing this excess cost[^5].
 
-#### Why does Bob Reconstruct the Correct Solutions to ARC-AGI?
+### Why does Bob Reconstruct the Correct Solutions to ARC-AGI?
 
 Remember from before that we are trying to figure out what solutions Bob will reconstruct, presuming from our compression viewpoint that the solutions will be correct. Why should we expect them to be correct in the above protocol?
 
@@ -149,7 +149,7 @@ In step 2, we reason that Alice wants to find short decompression algorithms $x$
 
 ![image](./resources/Rule_Coding.png)
 
-#### How do we Simulate the Game?
+### How do we Simulate the Game?
 
 Now, what does it take for us to figure out what these solutions will be? We must:
 - Construct some kind of distribution $q$ of decoders $x$ and compressed bits $z$.
@@ -164,7 +164,7 @@ Now, what does it take for us to figure out what these solutions will be? We mus
 
 One succinct way to describe the above procedure, in standard machine learning terminology, is given in the section below.
 
-#### TLDR; The Final Problem Setup
+### TLDR; The Final Problem Setup
 
  - For every ARC-AGI problem, we train a [variational autoencoder](https://arxiv.org/abs/1312.6114)'s decoder side to output the given problem, with no reconstruction error on the held-out solution.[^8]
  - There is no pretraining of the VAEs; the only training data is the given problem.
@@ -209,7 +209,7 @@ Components:
 
 The fundamental data format passed between the layers of our architecture is something we will call a "multitensor". **In order to understand any of the layers listed above, you must first read the below section on multitensors.**
 
-#### Multitensors
+### Multitensors
 
 Most common classes of machine learning architectures operate on a single type of tensor with constant rank. LLMs operate on rank 3 tensors of shape $[n\_batch, n\_tokens, n\_channels]$, and CNNs operate on a rank 4 tensors of shape $[n\_batch, n\_channels, height, width]$. Our multitensors are a set of varying-rank tensors of unique type, whose dimensions are a subset of a rank 6 tensor of shape $[n\_examples, n\_colors, n\_directions, height, width, n\_channels]$. We always keep the channel dimension, so there are at most 32 tensors in every multitensor. We also maintain [several rules](#rules-for-legal-multitensors) that determine whether a tensor shape is "legal" or not, which reduces the number of tensors in a multitensor to 18.
 
@@ -232,7 +232,7 @@ When we apply an operation on a multitensor, we by default assume that all non-c
 
 Usually when talking about a tensor's shape, we will not mention the channel dimension as it is included by default.
 
-#### Decoding Layer
+### Decoding Layer
 
 The decoding layer's job is to sample and bound the information content of a multitensor $z$, before it is passed to the next layer. This layer and outputs the KL divergence between the learned $z$ distribution and a presumed distribution. Penalizing the KL prevents the network from learning a distribution for $z$ that memorizes the ARC-AGI task in an uncompressed fashion, and forces it to represent the task more succinctly.
 
@@ -247,7 +247,7 @@ We compute the information content of $z$ as the KL divergence between the distr
 
 Finally, we postprocess the noisy $z$ by scaling it by the sigmoid of the signal-to-noise ratio.[^14] This ensures that $z$ is kept as-is when its variance consists mostly of useful information and it is nearly zero when its variance consists mostly of noise. All this is done 4 times to make a channel dimension of 4. Then we apply a multilinear layer, ie. a linear layer with different weights per tensor in the multitensor, mapping the channel dimension up to the dimension of the residual stream.
 
-#### Multitensor Communication Layer
+### Multitensor Communication Layer
 
 The multitensor communication layers allow different tensors in a multitensor to interact with each other. This layer is surrounded by a residual connection.
 
@@ -255,13 +255,13 @@ A multilinear layer first applies a multilinear layer to down-project the channe
 
 ![image](./resources/Multitensor_Sharing.png)
 
-#### Softmax Layer
+### Softmax Layer
 
 The softmax layers allow the network to denoise and sharpen internal representations that the network may intend to keep as one-hot. The softmax layers are surrounded by down- and up- multiprojections, pre-norm, and a residual connection.
 
 For every tensor in the multitensor input of channel dimension 2, the softmax layer lists out all the possible subsets of dimensions of the tensor to take a softmax over[^15], takes the softmax over these subsets of dimensions, and concatenates all the results together in the channel dimension. Thus, the output dimension varies across different tensors in the multitensor.
 
-#### Directional Cummax/Shift Layer
+### Directional Cummax/Shift Layer
 
 The directional cummax and shift layers allow the network to perform different operations in the upward direction than in the downward direction, and similarly for left and right, and so on, before information from opposite directions is aggregated together once again. These layers are equivariant to flipping the grids, as long as we also swap the indices of the direction dimension. These layers are surrounded by a residual connection. They have multilinears before and after to down- and up- project to and from a dimension of 4, and normalization right before the up-projection. These layers are only applied to the $[example, color, direction, height, width, channel]$ and $[example, direction, height, width, channel]$ tensors in the multitensor.
 
@@ -273,21 +273,21 @@ For the cumulative max but not the shift, the slices are rescaled to have min $-
 
 ![image](./resources/Directional_Shift_Cummax.png)
 
-#### Directional Communication Layer
+### Directional Communication Layer
 
 The directional communication layers allow the network to make use of relationships between directions. It provides a way for tensors that have direction-specific information to send information between two slices in the direction dimension, dependent on the angular difference the slices represent. This layer defines a separate linear map to be used for each of the 64 possible combinations of angles, but the weights of the linear maps are minimally tied such that the directional communication layer is equivariant to reflections and rotations (given that the indices of the direction dimension also permute accordingly). Sometimes, this also means that [weights for different tensors in the multitensor are tied together as well](#weight-tying-for-reflectionrotation-symmetry). Every direction slice in a tensor accumulates 8 messages, and adds the results together.[^16]
 
 The directional communication layers of channel dimension of 2 are surrounded by down- and up- multiprojections, pre-norm, and a residual connection.
 
-#### Nonlinear Layer
+### Nonlinear Layer
 
 We use a SiLU nonlinearity with channel dimension 16, surrounded by down- and up- multiprojections, pre-norm, and a residual connection.
 
-#### Normalization Layer
+### Normalization Layer
 
 We normalize all the tensors in the multitensor, using means and variances computed across all dimensions except the channel dimension. Normalization as used within other layers also generally operates this way.
 
-#### Linear Heads
+### Linear Heads
 
 We must take the final multitensor, and convert it to the format of an ARC-AGI task. More specifically, we must convert the multitensor into a distribution over ARC-AGI tasks, so that we can compute the log-likelihood of the observed grids in the task.
 
@@ -315,7 +315,7 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 
 ## Results
 
-###### Training set: 34.75%
+### Training set: 34.75%
 
 ![image](./resources/accuracy_curve_at_n_training.png)
 
@@ -332,7 +332,7 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 | 1500      | 97.25h  | 0.295  | 0.33   | 0.3825 | 0.4075  | 0.4675   | 0.5175    |
 | 2000      | 129.66h | 0.3025 | 0.3475 | 0.3825 | 0.415   | 0.485    | 0.5275    |
 
-###### Evaluation set: 20%
+### Evaluation set: 20%
 
 ![image](./resources/accuracy_curve_at_n_evaluation.png)
 
@@ -349,7 +349,7 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 | 1500      | 103.22h | 0.1825 | 0.215  | 0.2425 | 0.255   | 0.295    | 0.3175    |
 | 2000      | 137.63h | 0.185  | 0.2    | 0.2425 | 0.26    | 0.3125   | 0.3375    |
 
-#### What Problems Can and Can't We Solve?
+### What Problems Can and Can't We Solve?
 
 **The network tries to use its abilities to figure out as much as it can, until it gets bottlenecked by one of it's inabilities.**
 
@@ -381,7 +381,7 @@ A short list of abilities that cannot be performed by our network includes:
 - Planning, simulating the behavior of an agent (see problem [2dd70a9a](#list-of-mentioned-arc-agi-tasks))
 - Long range extensions of patterns (see problem 28e73c20 above)
 
-#### Seed Dependence
+### Seed Dependence
 
 While developing and testing the layers of our network, we found that in some runs, a task would never be solved even after 2000 iterations might easily be solved in 300 iterations after rerunning the same code (eg. we saw this extensively in task [272f95fa](#case-study-problem-272f95fa)). This makes us wonder how many of the tasks are solved consistently and how many are lucky breaks.
 
@@ -408,7 +408,7 @@ TODO correct numbers in table below
 | 1500      | 103.22h | 0.1825 | 0.215  | 0.2425 | 0.255   | 0.295    | 0.3175    |
 | 2000      | 137.63h | 0.185  | 0.2    | 0.2425 | 0.26    | 0.3125   | 0.3375    |
 
-#### What if we Remove Directional Layers?
+### What if we Remove Directional Layers?
 
 The directional layers may seem overengineered, and they have little in the way of wider purpose towards AGI, only serving to increase our score on the ARC-AGI dataset. Here, we show that removing these layers hurts performance in a predictable way:
 - Some abilities of our network disappear, namely the ones that require on row/column ordering to be well defined. Eg. Infilling, connecting dots with lines, pixel adjacencies.
@@ -452,58 +452,77 @@ Let's demonstrate the inner workings of our model using an example ARC-AGI task.
 
 ![image](./resources/272f95fa_problem.png)
 
-#### Watching the Network Learn (Problem 272f95fa)
+### Watching the Network Learn (Problem 272f95fa)
 
-###### After 50 steps of training:
+#### After 50 steps of training:
+
 ![image](./resources/272f95fa_at_50 steps.png)
+
 The network outputs a solution that has two rows and columns highlighted in blue, in the same place where the input has rows and columns in blue. This is probably because the network has noticed that all the other given input/output pairs have this correspondence. The network doesn't know how the other pixels are assigned their colors, as can be observed from the random coloring of remaining pixels in the sample. The sample average shows the network assigns mostly the same average color to non-light-blue pixels.
 
-###### After 150 steps of training:
+#### After 150 steps of training:
+
 ![image](./resources/272f95fa_at_150 steps.png)
+
 The sample shows nearby pixels being similar colors. The network has likely noticed that this is a common property among all the outputs, and is guessing that it applies to the held-out output too.
 
-###### After 200 steps of training:
+#### After 200 steps of training:
+
 ![image](./resources/272f95fa_at_200 steps.png)
+
 The sample now shows colors that are uniform(ish) within boxes outlined by the light blue borders, and the color consistency among nearby pixels ends at these borders. The network has noticed the common usage of borders to delineate colors in other outputs, and applies the same logic here. The network has also realized that all of the given outputs have black corner sections, so the sample now shows the same.
 
-###### After 350 steps of training:
+#### After 350 steps of training:
+
 ![image](./resources/272f95fa_at_350 steps.png)
+
 The sample now shows the correct colors assigned to boxes of the correct direction relative to the center box. The network has realized that the same color-to-direction mapping is used to pick the colors of boxes in all the other outputs, so it uses the same mapping here. It is still not the best at coloring within the lines, and also messes up the center box, as the middle does not correspond to a direction. Nonetheless, the sample average does show a tinge of the correct magenta color in the middle, indicating that the network is catching on. The postprocessing/guessing mechanism has picked from the network a solution with magenta in the middle.
 
-###### After 1500 steps of training:
+#### After 1500 steps of training:
+
 ![image](./resources/272f95fa_at_1500 steps.png)
+
 The network is as refined as it will ever be. Sometimes it will still make a mistake in the sample it outputs, but this is easily recognized as noise by the postprocessing/guessing mechanism.
 
 During training, the reconstruction error fell extremely quickly. It remained low on average, but would spike up every once in a while, causing the KL from $z$ to bump upwards at these moments.
 
 ![image](./resources/272f95fa_KL_vs_reconstruction.png)
 
-#### Solution Analysis (Problem 272f95fa)
+### Solution Analysis (Problem 272f95fa)
 
 So how does the network learn to solve the task? Let's look at the representations stored in $z$ to find out.
 
 Since $z$ is a [multitensor](#multitensors), each of the tensors it contains produces an additive contribution to the total KL for $z$. By looking at the per-tensor contributions, we can determine which tensors in $z$ code for information that is used to represent the ARC-AGI task. Below is a plot showing the quantity of information stored in each tensor of $z$, ie. the KL contribution used by the [decoding layer](#decoding-layer).
 
 ![image](./resources/272f95fa_KL_components.png)
+
 All the tensors fall to zero information content during training, except for four tensors. In some replications of this experiment, we saw one of these four necessary tensors fall to zero information content, and the network typically does not recover the correct solution after that. Here we are showing a lucky run where the $(color, direction, channel)$ tensor almost falls but gets picked up 200 steps in, which is right around when the samples from the model begin to show the correct colors in the correct boxes. We can look at the average output of the [decoding layer](#decoding-layer) for these tensors to see what information is stored there.
 
-###### (Examples, height, channel) tensor:
+#### (Examples, height, channel) tensor:
 For every example and row, there is a vector of dimension $n\_channels$. This forms a dataset of vectors. Taking the PCA of these vectors, the top principal component can tell us which examples/row combinations are uniquely identified by the stored information.
+
 ![image](./resources/272f95fa_example_height_component_0.png)
+
 It is 1485 times stronger than the second principal component, which indicates to us that basically all of the information is in the above tensor. **For every example, the two brightest pixels give the rows where the light blue rows in the problem are.**
 
-###### (Examples, width, channel) tensor:
+#### (Examples, width, channel) tensor:
+
 ![image](./resources/272f95fa_example_width_component_0.png)
+
 A very similar story here: **the two darkest pixels for every example give the columns where the light blue columns in the problem are.** The top principal component is 1253 times stronger than the next principal component.
 
-###### (Direction, color, channel) tensor:
+#### (Direction, color, channel) tensor:
+
 ![image](./resources/272f95fa_color_direction_component_0.png)
+
 Here, we see that the four brightest pixels identify blue with up, green with left, red with down, and yellow with right. **This tensor seems to tell each direction which color to use for the opposite direction's corresponding box.** The top principal component is 829 times stronger than the next principal component.
 
-###### (Color, channel) tensor:
+#### (Color, channel) tensor:
 Here, we look at the top three principal components, since the first and second principal components are 134 and 87 times stronger than the third component, indicating that they play a role while the third component does not.
+
 ![image](./resources/272f95fa_color_component_0.png)
 ![image](./resources/272f95fa_color_component_1.png)
+
 The **magenta and light blue colors** are uniquely identified, indicating their special usage amongst the rest of the colors as **the center color and the color of the row/column divisions**, respectively.
 
 
@@ -594,18 +613,22 @@ Our equivariance structures are inspired by [permutation-invariant neural networ
 
 # Appendix
 
-## Rules for legal multitensors
+#### Rules for legal multitensors
 
 1. At least one non-example dimension must be included. Examples are not special for any reason not having to do with colors, directions, rows, and columns.
 2. If the width or height dimension is included, the example dimension should also be included. Positions are intrinsic to grids, which are indexed by the example dimension. Without a grid it doesn't make as much sense to talk about positions.
 
-## Weight Tying for Reflection/Rotation Symmetry
+#### Weight Tying for Reflection/Rotation Symmetry
 
 When applying a different linear layer to every tensor in a multitensor, we have a linear layer for tensors having a width but not height dimension, and another linear layer for tensors having a height but not weight dimension. Whenever this is the case, we tie the weights together in order to preserve the whole network's equivariance to diagonal reflections and 90 degree rotations, which swap the weight and height dimensions.
 
 The softmax layer is not completely symmetrized because different indices of the output correspond to different combinations of dimension to softmax over. Tying the weights properly would be a bit complicated and time consuming for the performance improvement we expect, so we did not do this.
 
-## Preprocessing
+#### Training
+
+We train for 2000 iterations using Adam, with learning rate 0.01, $\beta_1$ of 0.5, and $\beta_2$ of 0.9.
+
+### Preprocessing
 
 #### Output Shape Determination
 
@@ -628,7 +651,7 @@ We notice that in almost all ARC-AGI tasks, colors that are not present in the p
 
 In addition, black is treated as a special color that is never included in the multitensor, since it normally represents the background in many ARC-AGI tasks. When performing color classification, a tensor of zeros is appended to the color dimension after applying the [linear head](#linear-heads), to represent logits for the black color.
 
-## Postprocessing
+### Postprocessing
 
 Postprocessing primarily deals with denoising the solutions sampled from the VAE. There are also [some operations](#linear-heads) performed to convert the constant-shape grids outputted by the VAE to the variable shape grids present in some problems.
 
@@ -641,11 +664,7 @@ When applying these techniques, we always take the slice of highest probability 
 
 We explored several different rules for when to select which method, and arrived at the following: (note that ARC-AGI allows for the program to make two guesses) Pick the two most commonly sampled solutions from after iteration 500, if they occur more than once. If not, replace with the solution constructed from an exponential moving average of the logits, with decay 0.97.
 
-## Training
-
-We train for 2000 iterations using Adam, with learning rate 0.01, $\beta_1$ of 0.5, and $\beta_2$ of 0.9.
-
-## What Happens to the Representations during Learning
+### What Happens to the Representations during Learning
 
 During training, the VAE tries to find representations of the ARC-AGI task that require less and less information to encode. This information is measured by the KL term for $z$, plus the a heavily penalized reconstruction error.
 
@@ -674,37 +693,50 @@ Problem 6d75e8bb is part of the training split.
 
 ![image](./resources/6d75e8bb_problem.png)
 
-##### Watching the Network Learn (Problem 6d75e8bb)
+#### Watching the Network Learn (Problem 6d75e8bb)
 
-**After 50 steps of training:**
+##### After 50 steps of training:
+
 ![image](./resources/6d75e8bb_at_50 steps.png)
+
 The average of sampled outputs shows that light blue pixels in the input are generally preserved in the output. However, black pixels in the input are haphazardly and randomly colored light blue and red. The network does not seem to know that the colored input/output pixels lie within some kind of bounding box, or that the bounding box is the same for the input and output grids.
 
-**After 100 steps of training:**
+##### After 100 steps of training:
+
 ![image](./resources/6d75e8bb_at_100 steps.png)
+
 The average of sampled outputs shows red pixels confined to an imaginary rectangle surrounding the light blue pixels. The network seems to have perceived that other examples use a common bounding box for the input and output pixels, but is not completely sure about where the boundary lies and what colors go inside the box in the output.
 
-**After 150 steps of training:**
+##### After 150 steps of training:
+
 ![image](./resources/6d75e8bb_at_150 steps.png)
+
 The average of sampled outputs shows almost all of the pixels in the imaginary bounding box to be colored red. The network has figured out the solution, and further training only refines the solution.
 
-##### Solution Analysis (Problem 6d75e8bb)
+#### Solution Analysis (Problem 6d75e8bb)
 
 ![image](./resources/6d75e8bb_KL_components.png)
+
 All the tensors fall to zero information content during training, except for three tensors. From 600-1000 steps, we see the $(example, height, width, channel)$ tensor suffer a massive drop in information content, with no change in the outputted solution. We believe it was being used to identify the light blue pixels in the input, but this information then got memorized by the nonlinear portions of the network, using the $(example, height, channel)$ and $(example, width, channel)$ as positional encodings.
 
 We can look at the average output of the [decoding layer](#decoding-layer) for these tensors to see what information is stored there.
 
-###### (Examples, height, channel) tensor:
+##### (Examples, height, channel) tensor:
+
 ![image](./resources/6d75e8bb_example_height_component_0.png)
+
 The first principal component is 771 times stronger than the second principal component. **A brighter pixel indicates a row with more light blue pixels.** It is unclear how the network knows where the borders of the bounding box are.
 
-###### (Examples, width, channel) tensor:
+##### (Examples, width, channel) tensor:
+
 ![image](./resources/6d75e8bb_example_width_component_0.png)
+
 The first principal component is 550 times stronger than the second principal component. **A darker pixel indicates a column with more light blue pixels.** It is unclear how the network knows where the borders of the bounding box are.
 
-###### (Color, channel) tensor:
+##### (Color, channel) tensor:
+
 ![image](./resources/6d75e8bb_color_component_0.png)
+
 This tensor serves to distinguish the roles of the two colors apart.
 
 ### Case Study: Problem 41e4d17e
@@ -714,19 +746,26 @@ Problem 41e4d17e is part of the training split.
 ![image](./resources/41e4d17e_problem.png)
 
 Solution from our network:
+
 ![image](./resources/41e4d17e_at_1500 steps.png)
 
-##### Solution Analysis (Problem 41e4d17e)
+#### Solution Analysis (Problem 41e4d17e)
 
 ![image](./resources/41e4d17e_KL_components.png)
+
 The only surviving tensors are the $(color, channel)$ and $(example, height, width, channel)$ tensors.
-###### (Examples, height, width, channel) tensor:
+
+##### (Examples, height, width, channel) tensor:
+
 ![image](./resources/41e4d17e_example_height_width_component_0.png)
+
 The top principal component is 2496 times stronger than the second principal component. **The $(examples, height, width, channel)$ tensor codes for the locations of the centers of the blue squares.** In the KL contribution plot, we can see that the information content of this tensor is decreasing over time. Likely, the network is in the process of eliminating the plus shaped representation, and replacing it with a pixel instead, which takes less space.
 
-###### (Color, channel) tensor:
+##### (Color, channel) tensor:
+
 ![image](./resources/41e4d17e_color_component_0.png)
 ![image](./resources/41e4d17e_color_component_1.png)
+
 The $(color, channel)$ tensor just serves to distinguish the individual roles of the colors in the task.
 
 ## List of Mentioned ARC-AGI Tasks
@@ -768,15 +807,14 @@ If you'd like to cite this blog post, use the following entry:
 
 
 TODO: upload duplicated run results to repo. Do non-directional experiment.
-TODO: add back to top links
-TODO: fix headers
-TODO: fix image-to-next-line spacing
+TODO: fix case study image rendering
 
 TODO: make sure links work. Click on all of them.
 TODO: fix the list numbering
 TODO: blog post citation bibtex url
 TODO: test installation instructions once public
 TODO: update release date
+TODO: look into options for sidebar table of contents
 
 Albert comments/notes:
 - top down explanation
