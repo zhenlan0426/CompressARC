@@ -177,7 +177,6 @@ One succinct way to describe the above procedure, in standard machine learning t
 The above sections detail the reasoning behind this particular setup, and why we believe it should work.
 
 
-[1]: We use "problem" to refer to the examples where both inputs and outputs are given, plus the inputs in examples where the held-out outputs aren't given. We use "solution" to refer to only the held-out outputs.
 [^2]: We hint at [Solomonoff Induction](https://www.sciencedirect.com/science/article/pii/S0019995864902232) here.
 [^3]: A lot of caveats here. The KL is in an expectation, there may be an added constant to the bit cost, the sampling may be approximate, etc. We're not up to date with the current literature, and we're ignoring all the sticky problems that may arise and presuming that they are all solved.
 [^4]: We will never need to run Relative Entropy Coding, so it doesn't matter that it takes time that is exponential in the KL. We only make use of the the fact that such algorithms exist, not that they run fast, in order to support our claims.
