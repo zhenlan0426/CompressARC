@@ -10,7 +10,7 @@ tags:
   - Architecture
   - AI
 ---
-![[teaser_figure_w_title.png]]
+![image](./resources/teaser_figure_w_title.png)
 
 This document is about a project we began several months ago to try out a niche perspective in machine learning: that **lossless information compression is sufficient to produce intelligent behavior**. We measured our success using the ARC-AGI dataset, and made an information compression based method that gets 20% on the evaluation set, with the following properties:
 
@@ -119,7 +119,7 @@ Suppose Alice wants to send the ARC-AGI dataset to Bob using the fewest number o
 
 Let's say that Alice and Bob are proficient at this game, and they use nearly optimally few bits.
 
-![[ARC as a Channel Capacity Problem.png]]
+![image](./resources/ARC_as_a_Channel_Capacity_Problem.png)
 
 The underlying assumption for our solution to ARC-AGI, is that the held-out solutions that Bob will end up reconstructing, will then be the correct solutions to ARC-AGI. If we can understand the game well enough to find Bob's reconstructions, even without having to solve the rest of the game, then we can solve ARC-AGI.
 
@@ -129,13 +129,13 @@ We can figure out what Bob does first, then we will describe how Alice will beha
 
 Firstly, let's try to deduce what a reasonable strategy for Bob might be. Let's say that Alice and Bob agree on a strategy Bob should use some particular decoding algorithm $x$ to decode whatever bits $z$ that Alice will send. Then, we can always create an alternate strategy where Bob uses a program executor as the decoding algorithm, and Alice prepends the code for decoding algorithm $x$ to the original bits $z$, for a constant additional cost equal to the length of $x$. As long as $x$ is short in length in comparison to $z$ (ie. roughly, there are more ARC-AGI problems than problem priors), switching Bob's decoding algorithm to a program executor shouldn't incur too much additional cost. So for sake of figuring out what Bob will do, we might as well assume he will decode with a program executor or at least some algorithm that can represent a large space of computations (hmmm - what about a neural network?), because this will almost always be a decently reasonable thing for him to do.
 
-![[Universal Decoders.png]]
+![image](./resources/Universal_Decoders.png)
 
 Then when Alice sees the ARC-AGI dataset and needs to communicate it, her job is to write a short-as-possible decompression algorithm $x$, plus a code $z$, to minimize the total length of $x$ and $z$. Thus Bob can assume Alice is more likely to send simpler algorithms $x$ for decoding, and he can define a probability distribution $q$ over $(x, z)$ pairs that assigns a higher probability to shorter total lengths.[^2] Each $(x, z)$ pair describes a decompression algorithm and some compressed bits, but it also equivalently describes a potential ARC-AGI dataset that Bob decodes upon running $x$ on $z$. So, we will use $q$ to refer to both the distribution of $(\text{algorithm}, \text{compressed bits})$ pairs and a distribution of potential ARC-AGI datasets.
 
 Now let's figure out what Alice will do. Suppose Alice and Bob have discussed in advance about some probability distribution $q$. Once they are separated, Alice makes another probability distribution $p$ over the same space, and decides she wants Bob to draw a sample from $p$ (without necessarily knowing $p$). It turns out that Alice can make this happen by sending $KL(p||q)$ bits to Bob[^3], using a technique called [Relative Entropy Coding][https://arxiv.org/abs/2010.01185] (shown below)[^4].
 
-![[Relative Entropy Coding.png]]
+![image](./resources/Relative_Entropy_Coding.png)
 
 Knowing that this is possible, we will presume that Alice and Bob will use the following strategy, which we believe to be quite close to optimal:
 1. Alice and Bob agree on a distribution of ARC-AGI datasets $q$. When Alice is given the actual ARC-AGI problems, she makes a delta distribution on her observed problems. She then picks a distribution of solutions and combines it with the delta distribution to make a distribution $p$ of ARC-AGI datasets. Even though in the $(problem, solution)$ viewpoint $p$ looks like a delta distribution with some other distribution, Alice will be picking the solution distribution by looking from the $(x, z)$ viewpoint where things are much more complicated. She sends a sample from $p$ to Bob, for a cost of $KL(p||q)$, and Bob decodes the ARC-AGI dataset where all the problems are the same as what Alice saw. But Bob will also get solutions drawn from $p$ as a side effect, and these solutions depend on what $(x, z)$ distribution Alice picks.
@@ -147,7 +147,7 @@ Remember from before that we are trying to figure out what solutions Bob will re
 
 In step 2, we reason that Alice wants to find short decompression algorithms $x$ that require few compressed bits $z$, to let Bob correctly decode the ARC-AGI problems. If Alice tries to use $z$ to encode both the inputs and outputs in every example, she will incur more cost than if she encodes a small number of per-example variables in $z$, and encodes two short rules to produce the inputs and outputs from the variables, in $x$. Therefore, Bob will "accidentally" end up decoding the held-out solutions by applying a rule to the corresponding inputs. Moreover, Alice's preference for simple rules dictates that the same rule be applied to every example, which means Bob will likely end up with not just any solutions, but the correct ones.[^6] If Alice does her job well and succeeds in finding sufficiently simple rules and bits to send, then she will implicitly send correct solutions to Bob.
 
-![[Rule Coding.png]]
+![image](./resources/Rule_Coding.png)
 
 #### How do we Simulate the Game?
 
@@ -160,7 +160,7 @@ Now, what does it take for us to figure out what these solutions will be? We mus
 	- We propose some $p$ by picking neural network weights and encodings on grids, measure the reconstruction error on given problems plus the KL, differentiate, and follow the gradient to find the best $p$. The KL will only penalize information in $z$, but information in $x$ (the weights) will be implicitly penalized because we will take a limited number of gradient descent steps.
 - When we decode the ARC-AGI problems, we get some guesses for the held-out solutions as a side effect. Those are the solutions that Alice will send to Bob, which we suspect will be correct solutions to ARC-AGI.
 
-![[Equivariant VAE.png]]
+![image](./resources/Equivariant_VAE.png)
 
 One succinct way to describe the above procedure, in standard machine learning terminology, is given in the section below.
 
@@ -192,7 +192,7 @@ The above sections detail the reasoning behind this particular setup, and why we
 
 We designed our own neural network architecture to solve ARC-AGI via [[#TLDR; The Final Problem Setup|the problem setup above]].
 
-![[Architecture Overview.png]]
+![image](./resources/Architecture_Overview.png)
 
 Components:
 - Begin with posterior distribution $p$,
@@ -223,7 +223,7 @@ Most common classes of machine learning architectures operate on a single type o
 | Width     | [[#Output Shape Determination\|Determined by preprocessing]]                                                                     |
 | Channel   | In the residual connections, the size is 8 if the direction dimension is included, else 16. Within layers it is layer-dependent. |
 
-![[Multitensor.png]]
+![image](./resources/Multitensor.png)
 
 To give an idea of how a multitensor stores data, an ARC-AGI task can be represented by using the $[examples, colors, height, width, channel]$ tensor, by using the channel dimension to select either the input or output grid, and the width/height dimensions for pixel location, a one hot vector in the color dimension, specifying what color that pixel is. The $[examples, width, channel]$ and $[examples, height, channel]$ tensors can similarly be used to store masks representing grid shapes for every example for every input/output grid. All those tensors are included in a single multitensor that is computed by the network just before the final [[#Linear Heads|linear heads]] layer.
 
@@ -254,7 +254,7 @@ The multitensor communication layers allow different tensors in a multitensor to
 
 A multilinear layer first applies a multilinear layer to down-project the channel dimension to a fixed size (8 for downwards communication and 16 for upwards communication). Then a message is sent to every other tensor that has at least the same dimensions for upwards communication, or at most the same dimensions for downwards communication. This message is created by either taking means along dimensions to remove them, or inserting/unsqueezing dimensions to add them. All the messages received by every tensor are summed together and normalization is applied. This result gets up-projected back to the residual's dimension and then added to the residual.
 
-![[Multitensor Sharing.png]]
+![image](./resources/Multitensor_Sharing.png)
 
 #### Softmax Layer
 
@@ -272,7 +272,7 @@ The directional shift layer does the same thing, but for shifting the grid by on
 
 For the cumulative max but not the shift, the slices are rescaled to have min $-1$ and max $1$ before applying the cumulative max.
 
-![[Directional Shift_Cummax.png]]
+![image](./resources/Directional_Shift_Cummax.png)
 
 #### Directional Communication Layer
 
@@ -292,7 +292,7 @@ We normalize all the tensors in the multitensor, using means and variances compu
 
 We must take the final multitensor, and convert it to the format of an ARC-AGI task. More specifically, we must convert the multitensor into a distribution over ARC-AGI tasks, so that we can compute the log-likelihood of the observed grids in the task.
 
-![[Linear heads.png]]
+![image](./resources/Linear_heads.png)
 
 The colors of every pixel for every example for both input and output, have logits defined by the $[examples, colors, height, width, channel]$ tensor, with the channel dimension linearly mapped down to a size of 2, representing the input and output grids.[^17] The log-likelihood is given by the crossentropy, with sum reduction across all the grids.
 
@@ -318,7 +318,7 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 
 ###### Training set: 34.75%
 
-![[accuracy_curve_at_n_training.png]]
+![image](./resources/accuracy_curve_at_n_training.png)
 
 | iteration | time    | pass@1 | pass@2 | pass@5 | pass@10 | pass@100 | pass@1000 |
 | --------- | ------- | ------ | ------ | ------ | ------- | -------- | --------- |
@@ -335,7 +335,7 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 
 ###### Evaluation set: 20%
 
-![[accuracy_curve_at_n_evaluation.png]]
+![image](./resources/accuracy_curve_at_n_evaluation.png)
 
 | iteration | time    | pass@1 | pass@2 | pass@5 | pass@10 | pass@100 | pass@1000 |
 | --------- | ------- | ------ | ------ | ------ | ------- | -------- | --------- |
@@ -356,11 +356,11 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 
 For example, task 28e73c20 in the training set requires extension of a pattern from the edge towards the middle:
 
-![[28e73c20_problem.png]]
+![image](./resources/28e73c20_problem.png)
 
 In general, the network is able to extend patterns for short ranges but not long ranges. So, it does the best that it can, and correctly extends the pattern a short distance before guessing at what happens near the center:
 
-![[28e73c20_solutions.png]]
+![image](./resources/28e73c20_solutions.png)
 
 A short list of abilities that can be performed by our network includes:
 - Assigning individual colors to individual procedures (see problem [[#List of Mentioned ARC-AGI Tasks|0ca9ddb6]])
@@ -392,7 +392,7 @@ TODO venn diagram of solved tasks. Do for @1, do for @2.
 
 We can also create an improved model by training two models in parallel and [[#Postprocessing|selecting the top k solutions found]] for our top-k accuracy. This indeed gives us a better performance at TODO% on the training set, for twice the training time:
 
-![[accuracy_curve_at_n_TODO.png]]
+![image](./resources/accuracy_curve_at_n_TODO.png)
 
 TODO correct numbers in table below
 
@@ -427,7 +427,7 @@ and three tasks that can no longer be solved,
 
 The new non-directional network runs much faster but only gets TODO%.
 
-![[accuracy_curve_at_n_TODO.png]]
+![image](./resources/accuracy_curve_at_n_TODO.png)
 
 TODO correct numbers in table below
 
@@ -451,33 +451,33 @@ TODO correct numbers in table below
 
 Let's demonstrate the inner workings of our model using an example ARC-AGI task. Problem 272f95fa is part of the training split.
 
-![[272f95fa_problem.png]]
+![image](./resources/272f95fa_problem.png)
 
 #### Watching the Network Learn (Problem 272f95fa)
 
 ###### After 50 steps of training:
-![[272f95fa_at_50 steps.png]]
+![image](./resources/272f95fa_at_50 steps.png)
 The network outputs a solution that has two rows and columns highlighted in blue, in the same place where the input has rows and columns in blue. This is probably because the network has noticed that all the other given input/output pairs have this correspondence. The network doesn't know how the other pixels are assigned their colors, as can be observed from the random coloring of remaining pixels in the sample. The sample average shows the network assigns mostly the same average color to non-light-blue pixels.
 
 ###### After 150 steps of training:
-![[272f95fa_at_150 steps.png]]
+![image](./resources/272f95fa_at_150 steps.png)
 The sample shows nearby pixels being similar colors. The network has likely noticed that this is a common property among all the outputs, and is guessing that it applies to the held-out output too.
 
 ###### After 200 steps of training:
-![[272f95fa_at_200 steps.png]]
+![image](./resources/272f95fa_at_200 steps.png)
 The sample now shows colors that are uniform(ish) within boxes outlined by the light blue borders, and the color consistency among nearby pixels ends at these borders. The network has noticed the common usage of borders to delineate colors in other outputs, and applies the same logic here. The network has also realized that all of the given outputs have black corner sections, so the sample now shows the same.
 
 ###### After 350 steps of training:
-![[272f95fa_at_350 steps.png]]
+![image](./resources/272f95fa_at_350 steps.png)
 The sample now shows the correct colors assigned to boxes of the correct direction relative to the center box. The network has realized that the same color-to-direction mapping is used to pick the colors of boxes in all the other outputs, so it uses the same mapping here. It is still not the best at coloring within the lines, and also messes up the center box, as the middle does not correspond to a direction. Nonetheless, the sample average does show a tinge of the correct magenta color in the middle, indicating that the network is catching on. The postprocessing/guessing mechanism has picked from the network a solution with magenta in the middle.
 
 ###### After 1500 steps of training:
-![[272f95fa_at_1500 steps.png]]
+![image](./resources/272f95fa_at_1500 steps.png)
 The network is as refined as it will ever be. Sometimes it will still make a mistake in the sample it outputs, but this is easily recognized as noise by the postprocessing/guessing mechanism.
 
 During training, the reconstruction error fell extremely quickly. It remained low on average, but would spike up every once in a while, causing the KL from $z$ to bump upwards at these moments.
 
-![[272f95fa_KL_vs_reconstruction.png]]
+![image](./resources/272f95fa_KL_vs_reconstruction.png)
 
 #### Solution Analysis (Problem 272f95fa)
 
@@ -485,26 +485,26 @@ So how does the network learn to solve the task? Let's look at the representatio
 
 Since $z$ is a [[#Multitensors|multitensor]], each of the tensors it contains produces an additive contribution to the total KL for $z$. By looking at the per-tensor contributions, we can determine which tensors in $z$ code for information that is used to represent the ARC-AGI task. Below is a plot showing the quantity of information stored in each tensor of $z$, ie. the KL contribution used by the [[#Decoding Layer|decoding layer]].
 
-![[272f95fa_KL_components.png]]
+![image](./resources/272f95fa_KL_components.png)
 All the tensors fall to zero information content during training, except for four tensors. In some replications of this experiment, we saw one of these four necessary tensors fall to zero information content, and the network typically does not recover the correct solution after that. Here we are showing a lucky run where the $(color, direction, channel)$ tensor almost falls but gets picked up 200 steps in, which is right around when the samples from the model begin to show the correct colors in the correct boxes. We can look at the average output of the [[#Decoding Layer|decoding layer]] for these tensors to see what information is stored there.
 
 ###### (Examples, height, channel) tensor:
 For every example and row, there is a vector of dimension $n\_channels$. This forms a dataset of vectors. Taking the PCA of these vectors, the top principal component can tell us which examples/row combinations are uniquely identified by the stored information.
-![[272f95fa_example_height_component_0.png]]
+![image](./resources/272f95fa_example_height_component_0.png)
 It is 1485 times stronger than the second principal component, which indicates to us that basically all of the information is in the above tensor. **For every example, the two brightest pixels give the rows where the light blue rows in the problem are.**
 
 ###### (Examples, width, channel) tensor:
-![[272f95fa_example_width_component_0.png]]
+![image](./resources/272f95fa_example_width_component_0.png)
 A very similar story here: **the two darkest pixels for every example give the columns where the light blue columns in the problem are.** The top principal component is 1253 times stronger than the next principal component.
 
 ###### (Direction, color, channel) tensor:
-![[272f95fa_color_direction_component_0.png]]
+![image](./resources/272f95fa_color_direction_component_0.png)
 Here, we see that the four brightest pixels identify blue with up, green with left, red with down, and yellow with right. **This tensor seems to tell each direction which color to use for the opposite direction's corresponding box.** The top principal component is 829 times stronger than the next principal component.
 
 ###### (Color, channel) tensor:
 Here, we look at the top three principal components, since the first and second principal components are 134 and 87 times stronger than the third component, indicating that they play a role while the third component does not.
-![[272f95fa_color_component_0.png]]
-![[272f95fa_color_component_1.png]]
+![image](./resources/272f95fa_color_component_0.png)
+![image](./resources/272f95fa_color_component_1.png)
 The **magenta and light blue colors** are uniquely identified, indicating their special usage amongst the rest of the colors as **the center color and the color of the row/column divisions**, respectively.
 
 
@@ -673,61 +673,61 @@ Below, we show two additional ARC-AGI tasks and a dissection of our network's so
 
 Problem 6d75e8bb is part of the training split.
 
-![[6d75e8bb_problem.png]]
+![image](./resources/6d75e8bb_problem.png)
 
 ##### Watching the Network Learn (Problem 6d75e8bb)
 
 **After 50 steps of training:**
-![[6d75e8bb_at_50 steps.png]]
+![image](./resources/6d75e8bb_at_50 steps.png)
 The average of sampled outputs shows that light blue pixels in the input are generally preserved in the output. However, black pixels in the input are haphazardly and randomly colored light blue and red. The network does not seem to know that the colored input/output pixels lie within some kind of bounding box, or that the bounding box is the same for the input and output grids.
 
 **After 100 steps of training:**
-![[6d75e8bb_at_100 steps.png]]
+![image](./resources/6d75e8bb_at_100 steps.png)
 The average of sampled outputs shows red pixels confined to an imaginary rectangle surrounding the light blue pixels. The network seems to have perceived that other examples use a common bounding box for the input and output pixels, but is not completely sure about where the boundary lies and what colors go inside the box in the output.
 
 **After 150 steps of training:**
-![[6d75e8bb_at_150 steps.png]]
+![image](./resources/6d75e8bb_at_150 steps.png)
 The average of sampled outputs shows almost all of the pixels in the imaginary bounding box to be colored red. The network has figured out the solution, and further training only refines the solution.
 
 ##### Solution Analysis (Problem 6d75e8bb)
 
-![[6d75e8bb_KL_components.png]]
+![image](./resources/6d75e8bb_KL_components.png)
 All the tensors fall to zero information content during training, except for three tensors. From 600-1000 steps, we see the $(example, height, width, channel)$ tensor suffer a massive drop in information content, with no change in the outputted solution. We believe it was being used to identify the light blue pixels in the input, but this information then got memorized by the nonlinear portions of the network, using the $(example, height, channel)$ and $(example, width, channel)$ as positional encodings.
 
 We can look at the average output of the [[#Decoding Layer|decoding layer]] for these tensors to see what information is stored there.
 
 ###### (Examples, height, channel) tensor:
-![[6d75e8bb_example_height_component_0.png]]
+![image](./resources/6d75e8bb_example_height_component_0.png)
 The first principal component is 771 times stronger than the second principal component. **A brighter pixel indicates a row with more light blue pixels.** It is unclear how the network knows where the borders of the bounding box are.
 
 ###### (Examples, width, channel) tensor:
-![[6d75e8bb_example_width_component_0.png]]
+![image](./resources/6d75e8bb_example_width_component_0.png)
 The first principal component is 550 times stronger than the second principal component. **A darker pixel indicates a column with more light blue pixels.** It is unclear how the network knows where the borders of the bounding box are.
 
 ###### (Color, channel) tensor:
-![[6d75e8bb_color_component_0.png]]
+![image](./resources/6d75e8bb_color_component_0.png)
 This tensor serves to distinguish the roles of the two colors apart.
 
 ### Case Study: Problem 41e4d17e
 
 Problem 41e4d17e is part of the training split.
 
-![[41e4d17e_problem.png]]
+![image](./resources/41e4d17e_problem.png)
 
 Solution from our network:
-![[41e4d17e_at_1500 steps.png]]
+![image](./resources/41e4d17e_at_1500 steps.png)
 
 ##### Solution Analysis (Problem 41e4d17e)
 
-![[41e4d17e_KL_components.png]]
+![image](./resources/41e4d17e_KL_components.png)
 The only surviving tensors are the $(color, channel)$ and $(example, height, width, channel)$ tensors.
 ###### (Examples, height, width, channel) tensor:
-![[41e4d17e_example_height_width_component_0.png]]
+![image](./resources/41e4d17e_example_height_width_component_0.png)
 The top principal component is 2496 times stronger than the second principal component. **The $(examples, height, width, channel)$ tensor codes for the locations of the centers of the blue squares.** In the KL contribution plot, we can see that the information content of this tensor is decreasing over time. Likely, the network is in the process of eliminating the plus shaped representation, and replacing it with a pixel instead, which takes less space.
 
 ###### (Color, channel) tensor:
-![[41e4d17e_color_component_0.png]]
-![[41e4d17e_color_component_1.png]]
+![image](./resources/41e4d17e_color_component_0.png)
+![image](./resources/41e4d17e_color_component_1.png)
 The $(color, channel)$ tensor just serves to distinguish the individual roles of the colors in the task.
 
 ## List of Mentioned ARC-AGI Tasks
@@ -736,16 +736,16 @@ All the problems we mentioned are part of the training split.
 
 | Name     | Problem                   | Name     | Problem                   |
 | -------- | ------------------------- | -------- | ------------------------- |
-| 025d127b | ![[025d127b_problem.png]] | 0a938d79 | ![[0a938d79_problem.png]] |
-| 0ca9ddb6 | ![[0ca9ddb6_problem.png]] | 0d3d703e | ![[0d3d703e_problem.png]] |
-| 0dfd9992 | ![[0dfd9992_problem.png]] | 0e206a2e | ![[0e206a2e_problem.png]] |
-| 1c786137 | ![[1c786137_problem.png]] | 1f876c06 | ![[1f876c06_problem.png]] |
-| 28e73c20 | ![[28e73c20_problem.png]] | 272f95fa | ![[272f95fa_problem.png]] |
-| 2bcee788 | ![[2bcee788_problem.png]] | 2dd70a9a | ![[2dd70a9a_problem.png]] |
-| 3bd67248 | ![[3bd67248_problem.png]] | 41e4d17e | ![[41e4d17e_problem.png]] |
-| 42a50994 | ![[42a50994_problem.png]] | 5ad4f10b | ![[5ad4f10b_problem.png]] |
-| 6d75e8bb | ![[6d75e8bb_problem.png]] | 7b6016b9 | ![[7b6016b9_problem.png]] |
-| ce9e57f2 | ![[ce9e57f2_problem.png]] |          |                           |
+| 025d127b | ![image](./resources/025d127b_problem.png) | 0a938d79 | ![image](./resources/0a938d79_problem.png) |
+| 0ca9ddb6 | ![image](./resources/0ca9ddb6_problem.png) | 0d3d703e | ![image](./resources/0d3d703e_problem.png) |
+| 0dfd9992 | ![image](./resources/0dfd9992_problem.png) | 0e206a2e | ![image](./resources/0e206a2e_problem.png) |
+| 1c786137 | ![image](./resources/1c786137_problem.png) | 1f876c06 | ![image](./resources/1f876c06_problem.png) |
+| 28e73c20 | ![image](./resources/28e73c20_problem.png) | 272f95fa | ![image](./resources/272f95fa_problem.png) |
+| 2bcee788 | ![image](./resources/2bcee788_problem.png) | 2dd70a9a | ![image](./resources/2dd70a9a_problem.png) |
+| 3bd67248 | ![image](./resources/3bd67248_problem.png) | 41e4d17e | ![image](./resources/41e4d17e_problem.png) |
+| 42a50994 | ![image](./resources/42a50994_problem.png) | 5ad4f10b | ![image](./resources/5ad4f10b_problem.png) |
+| 6d75e8bb | ![image](./resources/6d75e8bb_problem.png) | 7b6016b9 | ![image](./resources/7b6016b9_problem.png) |
+| ce9e57f2 | ![image](./resources/ce9e57f2_problem.png) |          |                           |
 
 ## Code
 
