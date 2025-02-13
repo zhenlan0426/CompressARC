@@ -10,6 +10,7 @@ tags:
   - Architecture
   - AI
 ---
+<br/><br/>
 <a name="topofpage"></a>![image](./resources/teaser_figure_w_title.png)
 
 This document is about a project we began several months ago to try out a niche perspective in machine learning: that **lossless information compression is sufficient to produce intelligent behavior**. We measured our success using the ARC-AGI dataset, and made an information compression based method that gets 20% on the evaluation set, with the following properties:
@@ -22,9 +23,10 @@ This document is about a project we began several months ago to try out a niche 
 
 Our conclusion: even without any external pretraining or large-scale search, lossless information compression (via a VAE) applied directly to each ARC problem is sufficient to grok the solution from the provided examples.
 
+<br/><br/>
 ---
 
-## Table of Contents
+# Table of Contents
 
 [Top of Page](#topofpage)
 1. [Table of Contents](#table-of-contents)
@@ -82,9 +84,10 @@ Our conclusion: even without any external pretraining or large-scale search, los
 	- [Code](#code)
 
 
+<br/><br/>
 ---
 
-## <a name="formulation"></a>ARC-AGI as an Information Compression Problem
+# <a name="formulation"></a>ARC-AGI as an Information Compression Problem
 
 So what do we mean when we say that "the ability to losslessly compress information is sufficient to produce intelligent behavior", and how does that relate to ARC-AGI?
 
@@ -107,7 +110,7 @@ The below sections describe our thought process and reasoning when building a lo
 To make the paradigm of information compression easier to understand, we will describe how we think about ARC-AGI in terms of a communication game. From this point on, we will presume some prior knowledge about information/communications theory, eg. KL divergences.
 
 Suppose Alice wants to send the ARC-AGI dataset to Bob using the fewest number of bits possible,
-- Bob must be able to reconstruct all the problems as well as held-out solutions[^-1],
+- Bob must be able to reconstruct all the problems as well as held-out solutions,
 - Bob's reconstructed problems must be correct,
 - there is no restriction on what held-out solutions Bob ends up reconstructing,
 - both Alice and Bob's computers can run for arbitrarily long amounts of time for encoding and decoding,
@@ -182,12 +185,13 @@ The above sections detail the reasoning behind this particular setup, and why we
 [^4]: We will never need to run Relative Entropy Coding, so it doesn't matter that it takes time that is exponential in the KL. We only make use of the the fact that such algorithms exist, not that they run fast, in order to support our claims.
 [^5]: In different language, we may refer to $q$ and $p$ as prior and posterior respectively, and say that Alice tries to approximate a Bayesian update on the [Solomonoff universal prior](http://sciencedirect.com/science/article/pii/S0019995864902232), upon observing the ARC-AGI problems, via [variational inference](https://arxiv.org/abs/1312.6114).
 [^6]: Alice may also equivalently encode in $z$ the outputs, plus a rule for corrupting the outputs to make the inputs. This would happen in tasks involving denoising the input. Alternatively she can also try to encode in $z$ some latent variables, plus two rules for getting both the inputs and outputs from the latents. A short and small modification of $x$ can pick between these options.
-[^7]: This is because we can apply error table techniques described on [the Hutter Prize webiste][http://prize.hutter1.net/hfaq.htm#lossy].
+[^7]: This is because we can apply error table techniques described on [the Hutter Prize webiste](http://prize.hutter1.net/hfaq.htm#lossy).
 [^8]: We penalize the reconstruction error by 10x the KL for $z$, in the total KL loss. This isn't detrimental to the measurement of the total KL because the KL term for $z$ can absorb all of the coded information from the reconstruction term, which can then go to zero. Since the term for $z$ is not penalized by any extra factor, the total KL we end up with is then unaffected. We believe this empirically helps because the Gaussians we use for $z$ are not as efficient for storing bits that can be recovered, as the categorical distributions that define the log likelihood in the reconstruction error. Forcing all the coded bits into one storage mode removes pathologies introduced by multiple storage modes.
 
+<br/><br/>
 ---
 
-## Architecture
+# Architecture
 
 We designed our own neural network architecture to solve ARC-AGI via [the problem setup above](#tldr-the-final-problem-setup).
 
@@ -311,9 +315,10 @@ With the ARC-AGI task distribution now defined, we can now evaluate the log-like
 [^17]: The linear map is initialized to be identical for both the input and output grid, but isn't fixed this way during learning. Sometimes this empirically helps with problems of inconsistent grid shapes. The bias on this linear map is multiplied by 100 before usage, otherwise it doesn't seem to be learned fast enough empirically. This isn't done for the shape tensors described by the following paragraph though.
 [^18]: There are multiple slices of the same shape that result in the correct ARC-AGI task to be decoded. We sum together the probabilities of getting any of the slices by applying a logsumexp to the log probabilities. But, we found empirically that training prematurely collapses onto one particular slice. So, we pre-multiply and post-divide the log probabilities by a coefficient when applying the logsumexp. The coefficient starts at 0.1 and increases exponentially to 1 over the first 100 iterations of training. We also pre-multiply the masks by the square of this coefficient as well, to ensure they are not able to strongly concentrate on one slice too early in training.
 
+<br/><br/>
 ---
 
-## Results
+# Results
 
 ### Training set: 34.75%
 
@@ -444,9 +449,10 @@ TODO correct numbers in table below
 | 2000      | 137.63h | 0.185  | 0.2    | 0.2425 | 0.26    | 0.3125   | 0.3375    |
 
 
+<br/><br/>
 ---
 
-## Case Study: Problem 272f95fa
+# Case Study: Problem 272f95fa
 
 Let's demonstrate the inner workings of our model using an example ARC-AGI task. Problem 272f95fa is part of the training split.
 
@@ -526,9 +532,10 @@ Here, we look at the top three principal components, since the first and second 
 The **magenta and light blue colors** are uniquely identified, indicating their special usage amongst the rest of the colors as **the center color and the color of the row/column divisions**, respectively.
 
 
+<br/><br/>
 ---
 
-## How to Improve Our Work
+# How to Improve Our Work
 
 At the time of release of this project, there were several ideas which we thought of trying or attempted at some point, but didn't manage to get working for one reason or another. Some ideas we still believe in, but didn't use, are listed below.
 
@@ -570,9 +577,10 @@ We implemented a mechanism to keep the KL above a minimum threshold so that the 
 We don't use it, but maybe it would help. Regularization is a rudimentary form of measuring the complexity of $x$ in our [problem formulation](#so-what-strategy-will-alice-and-bob-use).
 
 
+<br/><br/>
 ---
 
-## Related Work
+# Related Work
 
 #### Equivalence of Compression and Intelligence
 
@@ -613,7 +621,10 @@ Our architecture is fundamentally structured like a [transformer](https://arxiv.
 Our equivariance structures are inspired by [permutation-invariant neural networks](https://arxiv.org/abs/1703.06114), which are a type of [equivariant neural network](https://arxiv.org/abs/1602.07576). Equivariance transformations are taken from common augmentations to ARC-AGI problems.
 
 
+<br/><br/>
+
 ---
+<br/><br/>
 
 # Appendix
 
@@ -806,13 +817,13 @@ If you'd like to cite this blog post, use the following entry:
 
 [^19]: The two masks for the input and output are combined together to make one mask for use in these operations, since the channel dimension in these operations don't necessarily correspond to the input and output grids.
 
+<br/><br/>
 ---
 
 
 
 TODO: upload duplicated run results to repo. Do non-directional experiment.
 
-TODO: make sure links work. Click on all of them.
 TODO: blog post citation bibtex url
 TODO: test installation instructions once public
 TODO: update release date
