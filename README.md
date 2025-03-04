@@ -78,6 +78,6 @@ If you'd like to cite this blog post, use the following entry:
 	author = {Isaac Liao and Albert Gu},
 	title = {ARC-AGI Without Pretraining},
 	year = {2025},
-	url = {https://yourblog.com/post-url},
+	url = {https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html},
 }
 ```
