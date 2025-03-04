@@ -6,8 +6,8 @@ This is the code base for the [ARC-AGI Without Pretraining](https://iliao2345.gi
 ```
 > git clone https://github.com/iliao2345/CompressARC.git
 > cd CompressARC
-> python -m venv arc_without_reasoning
-> source arc_without_reasoning/bin/activate
+> python -m venv arc_agi_without_pretraining
+> source arc_agi_without_pretraining/bin/activate
 > pip install -r requirements.txt
 ```
 
