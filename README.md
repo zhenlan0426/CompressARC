@@ -39,7 +39,9 @@ A basic description of the code files in this repo:
 - `analyze_example.py`: Demonstrates how to solve one ARC-AGI problem using our method, with visualizations of learned task representations and plots of metrics.
 - `plot_problems.py`: Plots all of the ARC-AGI problems in a split.
 - `plot_accuracy.py`: Plots pass@n accuracies during/after a bulk training run with `train.py`.
-- `train.py`: Trains a model for every task in a split, plotting the accuracy. Contains code that computes the loss function.
+- `train.py`: Trains a model for every task in a split, plotting the accuracy. Contains code that computes the loss function. Defaults to the training split.
+- `parallel_train.py`: A multiprocessing program that schedules as many puzzles as possible in a split to be solved at the same time through `solve_task.py`, while maximizing the GPU memory usage. Defaults to the training split.
+- `scoring.py`: A script for scoring the results of `parallel_train.py`, which are better-formatted for Kaggle submissions.
 
 **Functionality, not for running via command line:**
 - `arc_compressor.py`: The network architecture and forward pass.
@@ -49,6 +51,7 @@ A basic description of the code files in this repo:
 - `preprocessing.py`: Converting the dataset into a form usable by the repo.
 - `solution_selection.py`: Logging metrics and converting model outputs into solution predictions.
 - `visualization.py`: Drawing problems and solutions.
+- `solve_task.py`: A job script to solve one ARC-AGI problem on a specified GPU.
 
 **Some classes that the repo defines and uses:**
 - `MultiTensorSystem` (in `multitensor_systems.py`): A class that can spawn MultiTensors using stored dimensional information.
