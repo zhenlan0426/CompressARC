@@ -26,6 +26,30 @@ Class **MultiTensorSystem**:
 Class **MultiTensor**:
 - __getitem__ / __setitem__: allow simple indexing (e.g. multitensor[dims]) into the nested list
 
+**self.multiposteriors** is a MultiTensor structure that contains tensors for all valid dimension combinations (dims) in the multitensor system, and it is meant to represent the latent state z.
+- For each valid dims, it contains a list with two elements:
+  - [mean_tensor, local_capacity_adjustment_tensor]
+- mean_tensor has shape:
+  - Including dimensions from [n_examples, n_colors, n_directions, n_x, n_y] where the corresponding dims[i] == 1
+  - Appending self.decoding_dim (which is 4) as the final channel dimension
+  - For example:
+    - If dims = [1, 1, 0, 1, 1], the shape would be [n_examples, n_colors, n_x, n_y, 4]
+    - If dims = [1, 0, 1, 0, 0], the shape would be [n_examples, n_directions, 4]
+- The two tensors in each dims entry are:
+  - mean: Initialized with small random values (0.01 * torch.randn(shape)) - represents the mean of the posterior distribution
+  - local_capacity_adjustment: Initialized with zeros - used for capacity adjustments in the VAE framework
+
+Class **ARCCompressor**:
+- self.weights_list: list of all weights in the model to be optimized
+  - Task-Independent Weights:
+    - self.decode_weights - linear maps with fixed channel dimensions
+    - self.share_up_weights, self.share_down_weights, etc. - all use fixed channel dimensions
+    - self.head_weights, self.mask_weights - fixed dimensions
+  - Task-Dependent Weights:
+    - self.multiposteriors - created by initialize_multiposterior(self.decoding_dim)
+    - This calls self.multitensor_system.shape(dims, channel_dim) which DOES depend on task dimensions!
+
+
 
 #### other considerations
 - Multi-Task Learning (Your new proposal)
