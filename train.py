@@ -80,20 +80,27 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
                 x_log_partitions = []
                 y_log_partitions = []
                 for length in range(1, x_mask.shape[1]+1):
+                    # this is log sum exp over grid of given length
                     x_log_partitions.append(mask_select_logprobs(coefficient*x_mask[example_num,:,in_out_mode], length)[0])
                 for length in range(1, y_mask.shape[1]+1):
                     y_log_partitions.append(mask_select_logprobs(coefficient*y_mask[example_num,:,in_out_mode], length)[0])
+                # this is log sum exp over all possible lengths
                 x_log_partition = torch.logsumexp(torch.stack(x_log_partitions, dim=0), dim=0)
                 y_log_partition = torch.logsumexp(torch.stack(y_log_partitions, dim=0), dim=0)
 
-            # Given that we have the correct grid size, get the reconstruction error of getting the colors right
+            # log P(correct colors) = log sum over all possible starts P(grid that starts at x_offset, y_offset) * P(correct colors given grid)
+            # log sum exp log P(above) = log sum exp (log P1 + log P2)
+            # this two loops calculate log P1 + log P2
             logprobs = [[] for x_offset in range(x_logprobs.shape[0])]  # x, y
-            for x_offset in range(x_logprobs.shape[0]):
-                for y_offset in range(y_logprobs.shape[0]):
-                    logprob = x_logprobs[x_offset] - x_log_partition + y_logprobs[y_offset] - y_log_partition  # given the correct grid size,
+            for x_offset in range(x_logprobs.shape[0]): # iterate over all possible x with length output_shape[0]
+                for y_offset in range(y_logprobs.shape[0]): # two loops together iterate over all possible grid of size output_shape[0] x output_shape[1]
+                    # x_logprobs[x_offset] - x_log_partition is the log probability of grid length output_shape[0] starting at x_offset, 
+                    # normalized by all possible grids sizes starting at all possible x_offsets
+                    logprob = x_logprobs[x_offset] - x_log_partition + y_logprobs[y_offset] - y_log_partition
                     logits_crop = logits_slice[:,x_offset:x_offset+output_shape[0],y_offset:y_offset+output_shape[1]]  # c, x, y
                     target_crop = problem_slice[:output_shape[0],:output_shape[1]]  # x, y
-                    logprob = logprob - torch.nn.functional.cross_entropy(logits_crop[None,...], target_crop[None,...], reduction='sum')  # calculate the error for the colors.
+                    # this is the log probability of the colors being correct, given the grid size
+                    logprob = logprob - torch.nn.functional.cross_entropy(logits_crop[None,...], target_crop[None,...], reduction='sum')
                     logprobs[x_offset].append(logprob)
             logprobs = torch.stack([torch.stack(logprobs_, dim=0) for logprobs_ in logprobs], dim=0)  # x, y
             if grid_size_uncertain:
