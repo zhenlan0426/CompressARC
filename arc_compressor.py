@@ -111,6 +111,7 @@ class ARCCompressor:
             list[str]: A list of tensor names that correspond to each tensor in the aforementioned output.
         """
         # Decoding layer
+        # x does not have input / output dimension. as test output is not known, we will have to a shared representation for both input and output.
         x, KL_amounts, KL_names = layers.decode_latents(
             self.target_capacities, self.decode_weights, self.multiposteriors
         )

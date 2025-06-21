@@ -208,10 +208,11 @@ def share_direction(residual, share_weights, direction):
                     for dim, (higher_naxes, naxes) in reversed(list(enumerate(zip(higher_dims, dims)))):
                         if higher_naxes > naxes:
                             axis = sum(higher_dims[:dim], 0)
+                            # only average over non-masked elements (top left corner)
                             if (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
                                 # expand/contract masks to make the dims the same as higher_x
-                                masks = x.multitensor_system.task.masks
-                                masks = 1-(1-masks[...,0])*(1-masks[...,1])
+                                masks = x.multitensor_system.task.masks # (example, x, y, in/out)
+                                masks = 1-(1-masks[...,0])*(1-masks[...,1]) # 1 if either in or out is 1, (example, x, y)
                                 for i in range(sum(higher_dims[1:3])):  # insert color and direction dims
                                     masks = masks[:,None,...]
                                 if dims[4] == 0:  # remove y dim
