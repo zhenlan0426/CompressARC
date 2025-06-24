@@ -332,14 +332,15 @@ def make_directional_layer(fn, diagonal_fn):
         """
 
         # rearrange mask to fit same shape as x
-        masks = 1-(1-masks[...,0])*(1-masks[...,1])
+        masks = 1-(1-masks[...,0])*(1-masks[...,1]) # (example, x, y)
         if dims[4]==0:
             masks = masks[:,:,0]
         if dims[3]==0:
             masks = masks[:,0,...]
+        # dims (example - 0, color - 1, direction - 2, x - 3, y - 4)
         for i in range(sum(dims[1:3])):
             masks = masks[:,None,...]
-        masks = masks[...,None]
+        masks = masks[...,None] # hidden channel dim
         # mask out x
         x = x*masks
 
@@ -427,11 +428,15 @@ def diagonal_cummax_(x, dim1, dim2, masks):
     min_dim = min(x.shape[dim1], x.shape[dim2])
     n_iters = int(np.ceil(np.log2(min_dim)))
     # compute the cummax and max via forward+backward associative scan
+    # unlike typical parallel scan, we don't have sparse updates, e.g. for length 8, instead of updating 1,3,5,7 in first iteration
+    # and then 3, 7 and then 7, we update 0~7 in first iteration, 1~7 in second iteration, 3~7 in third iteration
+    # as a result, we dont need backward scan to get the prefix max. it is only needed to "broadcast" the max per diagnal to normalize.
     max_x = x - masks_
     for sign in (1, -1):
         for i in range(n_iters):
             shift_amount = sign*2**i
             shifted_x = diagonal_shift_(max_x, dim1, dim2, masks_, shift_amount=shift_amount, pad_value=-1e3)
+            # M[i,j] = max(M[i,j], M[i-2^iterations,j-2^iterations]) for i,j >= 2^iterations
             max_x = torch.max(max_x, shifted_x)
         if sign == 1:  # save the cummax after the forward associative scan
             cummax_x = max_x + masks_
