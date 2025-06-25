@@ -313,6 +313,9 @@ def make_directional_layer(fn, diagonal_fn):
     Take a directional function (one version made for cardinal directions and another for diagonal)
     and use it to create a directional layer that works on tensors that have a direction
     dimension.
+    fn works on one direction. Use dim (x vs y) and flip (+x vs -x) to make it work on the other four directions.
+    diagonal_fn works on one diagonal direction. use flip x (yes or no), flip y (yes or no) to make it work on the other three diagonal directions.
+    channel split is used for each of the 8 directions to include both forward and backward.
     Args:
         fn (Callable): A directional function that takes a tensor and a dim argument.
         diagonal_fn (Callable): A directional function that takes a tensor and two dim arguments.
