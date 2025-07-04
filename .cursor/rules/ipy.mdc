@@ -1,0 +1,6 @@
+---
+description: When asked to modify or analyze .ipynb files
+globs: 
+alwaysApply: false
+---
+When asked to modify or analyze .ipynb files, work with the paired .py file that has the same filename instead, as it contains the same code without JSON metadata.

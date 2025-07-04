@@ -9,3 +9,6 @@ better to not have special treatment?
    - normalize more aligned with multitensor system since it is block-wise operation. why normalize along all but last axis per tensor? how about normalize along just last axis? allow tunable normalization factor like BatchNorm?
 6. normalize exclude example axis?
 7. cummax limits aggregation to top left corner based on masks. save as share down.
+8. mask search over both start and length. alternatively, mask search over only length, use top left corner of logits as start.
+9. x_mask and y_mask assume independence. we can take mask of shape (example, x, y, 2) to jointly search over x and y.
+10. instead of collecting all solutions throughout training, collect solution based on last model weights and z without sample.

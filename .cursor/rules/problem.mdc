@@ -1,0 +1,11 @@
+---
+description: problem we are solving
+globs: 
+alwaysApply: false
+---
+**Problem:**  
+The goal is to solve the ARC AGI benchmark. Each task consists of a sequence of input-output pairs:  
+\[(\text{input}_1, \text{output}_1), (\text{input}_2, \text{output}_2), \dots, (\text{input}_N, \text{output}_N)\],  
+where each input and output is a 2D grid of integers in the range \([0, 9]\).  
+Given all previous input-output examples up to \(\text{input}_N\), the objective is to predict \(\text{output}_N\).  
+The model will be evaluated on previously unseen test tasks.
