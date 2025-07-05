@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from torch_scatter import segment_coo
+from torch_scatter import segment_coo, scatter_mean
 from typing import Optional
 import numpy as np
 
@@ -17,7 +17,7 @@ torch.manual_seed(0)
 
 def normalize_vec(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
     """
-    Vectorized normalize operation using pytorch_scatter segment_coo for efficient segment reduction.
+    Vectorized normalize operation using scatter_mean for efficient segment reduction.
     
     Normalizes each slice to have variance one, computed independently per slice and channel.
     Uses pre-computed row2slice mapping for optimal performance.
@@ -32,13 +32,13 @@ def normalize_vec(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor
     
     n_slices = len(flat.dims_list)
     
-    # Use pre-computed row2slice mapping - indices are already sorted
+    # Use pre-computed row2slice mapping
     row2slice = flat.row2slice
     
-    # Compute per-slice statistics using segment_coo (optimized for sorted indices)
+    # Compute per-slice statistics using scatter_mean
     if debias:
         # Compute mean per slice per channel: shape (n_slices, channel_dim)
-        slice_means = segment_coo(flat.data, row2slice, dim_size=n_slices, reduce='mean')
+        slice_means = scatter_mean(flat.data, row2slice, dim=0, dim_size=n_slices)
         
         # Subtract mean from each position
         centered_data = flat.data - slice_means[row2slice]
@@ -51,7 +51,7 @@ def normalize_vec(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor
         centered_data = flat.data
     
     # Compute mean of squared values (variance) per slice per channel
-    slice_vars = segment_coo(variance_data, row2slice, dim_size=n_slices, reduce='mean')
+    slice_vars = scatter_mean(variance_data, row2slice, dim=0, dim_size=n_slices)
     
     # Compute standard deviation with numerical stability
     eps = 1e-8
@@ -60,15 +60,15 @@ def normalize_vec(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor
     # Normalize: divide centered data by standard deviation
     normalized_data = centered_data / slice_stds[row2slice]
     
-    # Create new FlatMultiTensor with normalized data
+    # Create new FlatMultiTensor with normalized data - avoid unnecessary copying
     return FlatMultiTensor(
         data=normalized_data,
-        offsets=flat.offsets.clone(),
-        lengths=flat.lengths.clone(),
-        shapes=flat.shapes.copy(),
-        dims_list=flat.dims_list.copy(),
+        offsets=flat.offsets,
+        lengths=flat.lengths,
+        shapes=flat.shapes,
+        dims_list=flat.dims_list,
         channel_dim=flat.channel_dim,
-        row2slice=flat.row2slice.clone(),
+        row2slice=flat.row2slice,
     )
 
 
