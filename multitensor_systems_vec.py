@@ -21,6 +21,7 @@ class FlatMultiTensor:
         shapes: List[List[int]],           # list of full spatial shapes (len = n_slices)
         dims_list: List[Tuple[int, ...]],  # list of the 5-bit masks that identify each slice
         channel_dim: int,
+        row2slice: torch.Tensor,           # (total_positions,) mapping each row to its slice index
     ):
         self.data = data
         self.offsets = offsets
@@ -28,6 +29,7 @@ class FlatMultiTensor:
         self.shapes = shapes
         self.dims_list = dims_list
         self.channel_dim = channel_dim
+        self.row2slice = row2slice
 
     # ---------------------------------------------------------------------
     # Convenience helpers
@@ -57,13 +59,6 @@ class FlatMultiTensor:
         for idx, dims in enumerate(self.dims_list):
             result[tuple(dims)] = self.view(idx)
         return result
-
-
-def _generate_all_dims():
-    """Yield every 5-bit mask and its integer index (0..31)."""
-    for i in range(1 << NUM_DIMENSIONS):
-        yield [(i >> bit) & 1 for bit in range(NUM_DIMENSIONS)]
-
 
 def pack_multitensor(mt, multitensor_system, channel_dim: int) -> FlatMultiTensor:
     """Convert the nested ``MultiTensor`` *mt* into a ``FlatMultiTensor``.
@@ -102,19 +97,6 @@ def pack_multitensor(mt, multitensor_system, channel_dim: int) -> FlatMultiTenso
 
     total_positions = running_total
     
-    # Handle empty case
-    if total_positions == 0:
-        # Create empty tensors with default device/dtype
-        data = torch.zeros((0, channel_dim), dtype=torch.float32)
-        return FlatMultiTensor(
-            data=data,
-            offsets=torch.tensor([], dtype=torch.long),
-            lengths=torch.tensor([], dtype=torch.long),
-            shapes=[],
-            dims_list=[],
-            channel_dim=channel_dim,
-        )
-    
     # Allocate big buffer and copy data
     # Get device and dtype from first tensor
     first_dims = next(iter(multitensor_system))
@@ -129,6 +111,12 @@ def pack_multitensor(mt, multitensor_system, channel_dim: int) -> FlatMultiTenso
         length = lengths[idx]
         data[start : start + length].copy_(tensor.view(length, channel_dim))
 
+    # Pre-compute row2slice mapping for efficient scatter operations
+    row2slice = torch.repeat_interleave(
+        torch.arange(len(dims_list), device=data.device, dtype=torch.long),
+        torch.tensor(lengths, device=data.device, dtype=torch.long)
+    )
+
     return FlatMultiTensor(
         data=data,
         offsets=torch.tensor(offsets, device=data.device, dtype=torch.long),
@@ -136,6 +124,7 @@ def pack_multitensor(mt, multitensor_system, channel_dim: int) -> FlatMultiTenso
         shapes=shapes,
         dims_list=dims_list,
         channel_dim=channel_dim,
+        row2slice=row2slice,
     )
 
 

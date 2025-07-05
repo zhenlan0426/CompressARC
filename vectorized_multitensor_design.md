@@ -53,3 +53,13 @@ Both live in `multitensor_systems_vec.py`.
 
 ---
 *Last updated: initial scaffolding committed; will expand as porting progresses.* 
+
+# Implementation Details
+
+## 1. different tensor has different matrix for matmul
+* Per-row fused multiply-add (no padding, single kernel)
+Flatten all activations into (P, 16) where P = Σ rows_per_slice.
+Build a (P, 16, 16) tensor of weights by gathering the 16×16 matrix that corresponds to each row’s slice index.
+Compute y = torch.einsum('pi,pij->pj', x, w) or the equivalent torch.sum(x.unsqueeze(-1) * w, dim=1).
+One kernel launch, no padding; memory overhead is just the repeated weights (each 16×16 matrix copied rows_per_slice times). Because rows_per_slice is usually small (<40) compared with the 16×16 weight, this duplication is often acceptable, but we can still fallback to buckets for very large slices.
+* save (P, 16, 16) weights in a tensor? view as (P, 16, 16). manage weights tensor during init and ensure backward pass compatible.
