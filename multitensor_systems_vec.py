@@ -60,17 +60,13 @@ class FlatMultiTensor:
             result[tuple(dims)] = self.view(idx)
         return result
 
-def pack_multitensor(mt, multitensor_system, channel_dim: int) -> FlatMultiTensor:
+def flat_multitensor(mt, debug=False) -> FlatMultiTensor:
     """Convert the nested ``MultiTensor`` *mt* into a ``FlatMultiTensor``.
 
     Args
     -----
     mt : multitensor_systems.MultiTensor
         The original nested structure we want to flatten.
-    multitensor_system : multitensor_systems.MultiTensorSystem
-        Source system – gives us valid dimension combos and shape helper.
-    channel_dim : int
-        Uniform channel width C for *all* slices.
 
     Returns
     -------
@@ -82,7 +78,9 @@ def pack_multitensor(mt, multitensor_system, channel_dim: int) -> FlatMultiTenso
     lengths: List[int] = []
     shapes: List[List[int]] = []
     dims_list: List[Tuple[int, ...]] = []
-
+    tensor_list: List[torch.Tensor] = []
+    multitensor_system = mt.multitensor_system
+    channel_dim = mt[1,1,1,1,1].shape[-1]
     # Build metadata first – iterate in the same order as multitensor_system
     running_total = 0
     for dims in multitensor_system:
@@ -93,24 +91,17 @@ def pack_multitensor(mt, multitensor_system, channel_dim: int) -> FlatMultiTenso
         lengths.append(num_pos)
         shapes.append(spatial_shape)
         dims_list.append(tuple(dims))
+        
+        # Flatten the tensor and add to list for concatenation
+        flattened = tensor.view(num_pos, channel_dim)
+        tensor_list.append(flattened)
+        
         running_total += num_pos
 
-    total_positions = running_total
-    
-    # Allocate big buffer and copy data
-    # Get device and dtype from first tensor
-    first_dims = next(iter(multitensor_system))
-    first_tensor = mt[first_dims]
-    device = next(first_tensor.parameters(), torch.tensor([])).device if hasattr(first_tensor, 'parameters') else first_tensor.device
-    dtype = first_tensor.dtype
-    data = torch.zeros((total_positions, channel_dim), dtype=dtype, device=device)
-
-    for idx, dims in enumerate(multitensor_system):
-        tensor = mt[dims]
-        start = offsets[idx]
-        length = lengths[idx]
-        data[start : start + length].copy_(tensor.view(length, channel_dim))
-
+    # Concatenate all tensors to preserve gradients
+    data = torch.cat(tensor_list, dim=0)
+    if debug:
+        data = data.detach().requires_grad_(True)
     # Pre-compute row2slice mapping for efficient scatter operations
     row2slice = torch.repeat_interleave(
         torch.arange(len(dims_list), device=data.device, dtype=torch.long),

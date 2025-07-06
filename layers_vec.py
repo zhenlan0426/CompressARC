@@ -15,7 +15,7 @@ np.random.seed(0)
 torch.manual_seed(0)
 
 
-def normalize_vec(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
+def normalize(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
     """
     Vectorized normalize operation using scatter_mean for efficient segment reduction.
     
@@ -71,50 +71,3 @@ def normalize_vec(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor
         row2slice=flat.row2slice,
     )
 
-
-def affine_vec(flat: FlatMultiTensor, weights: torch.Tensor, bias: Optional[torch.Tensor] = None) -> FlatMultiTensor:
-    """
-    Vectorized affine transformation for FlatMultiTensor.
-    
-    Args:
-        flat: Input FlatMultiTensor
-        weights: Weight tensor of shape (n_slices, channel_dim, channel_dim) or (channel_dim, channel_dim)
-        bias: Optional bias tensor of shape (n_slices, channel_dim) or (channel_dim,)
-        
-    Returns:
-        FlatMultiTensor with transformed data
-    """
-    
-    # Use pre-computed row2slice mapping
-    row2slice = flat.row2slice
-    
-    if weights.dim() == 3:
-        # Per-slice weights: (n_slices, channel_dim, channel_dim)
-        # Gather weights for each position: (total_positions, channel_dim, channel_dim)
-        pos_weights = weights[row2slice]  # (total_positions, channel_dim, channel_dim)
-        
-        # Apply transformation: (P, C) @ (P, C, C) -> (P, C)
-        # Using einsum for batched matrix multiplication
-        transformed_data = torch.einsum('pc,pco->po', flat.data, pos_weights)
-    else:
-        # Global weights: (channel_dim, channel_dim)
-        transformed_data = torch.matmul(flat.data, weights)
-    
-    if bias is not None:
-        if bias.dim() == 2:
-            # Per-slice bias: (n_slices, channel_dim)
-            pos_bias = bias[row2slice]  # (total_positions, channel_dim)
-            transformed_data = transformed_data + pos_bias
-        else:
-            # Global bias: (channel_dim,)
-            transformed_data = transformed_data + bias
-    
-    return FlatMultiTensor(
-        data=transformed_data,
-        offsets=flat.offsets.clone(),
-        lengths=flat.lengths.clone(),
-        shapes=flat.shapes.copy(),
-        dims_list=flat.dims_list.copy(),
-        channel_dim=flat.channel_dim,
-        row2slice=flat.row2slice.clone(),
-    ) 
