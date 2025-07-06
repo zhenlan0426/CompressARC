@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from torch_scatter import segment_coo, scatter_mean
+from torch_scatter import segment_csr, scatter_mean
 from typing import Optional
 import numpy as np
 
@@ -112,22 +112,14 @@ def share_up(flat: FlatMultiTensor) -> FlatMultiTensor:
     flat.build_share_up_metadata()
 
     # --------------------------------------------------------------
-    # 1. Duplicate source rows according to pre-computed repeat counts.
+    # Fast path using CSR metadata (pre-computed once during initialisation).
     # --------------------------------------------------------------
-    # src_expanded has shape (M, C) where M = repeat_counts.sum().
-    src_expanded = torch.repeat_interleave(flat.data, flat.repeat_counts.to(torch.long), dim=0)
+    # 1. Gather *all* source contributions in the order expected by CSR.
+    src_expanded = flat.data[flat.src_rows.to(torch.long)]  # (M, C)
 
-    # --------------------------------------------------------------
-    # 2. Scatter-add into destination rows (segment_coo requires the index
-    #    tensor to be sorted in *non-decreasing* order).
-    # --------------------------------------------------------------
-    # Ensure destination indices are in the required ``torch.long`` dtype.
-    dst_rows_long = flat.dst_rows.to(torch.long)
-
-    idx_sorted = torch.argsort(dst_rows_long)
-    dst_sorted = dst_rows_long[idx_sorted]
-    src_sorted = src_expanded[idx_sorted]
-    out_data = segment_coo(src_sorted, dst_sorted, dim_size=flat.data.shape[0], reduce="sum")
+    # 2. Aggregate into destination rows via ``segment_csr`` (no sorting or
+    #    additional indexing work is required).
+    out_data = segment_csr(src_expanded, flat.csr_ptr.to(torch.long), reduce="sum")
 
     # Preserve type information by constructing a new FlatMultiTensor that
     # re-uses all structural metadata from ``flat`` but replaces the data.

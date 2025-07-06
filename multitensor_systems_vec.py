@@ -33,6 +33,11 @@ class FlatMultiTensor:
         self.row2slice = row2slice
         self.build_share_up_metadata()
 
+    # ------------------------------------------------------------------
+    # Class-level cache for expensive share-up metadata.
+    # ------------------------------------------------------------------
+    _share_up_cache: dict = {}
+
     # ---------------------------------------------------------------------
     # Convenience helpers
     # ---------------------------------------------------------------------
@@ -83,9 +88,46 @@ class FlatMultiTensor:
             • ``self.repeat_counts`` – shape ``(N,)``
             • ``self.dst_rows``     – shape ``(M,)``, where ``M = repeat_counts.sum()``
         """
-        # If already initialised, do nothing – useful when called multiple times.
-        if hasattr(self, "repeat_counts") and self.repeat_counts is not None:
+        # Re-entry guard – if metadata is already attached to *this* instance.
+        if hasattr(self, "csr_ptr") and self.csr_ptr is not None:
             return
+
+        # ------------------------------------------------------------------
+        # 0) Try to **reuse** cached metadata.  The structural layout of the
+        #    tensor system (dims_list + per-axis lengths) is invariant across
+        #    training steps, while the *data* buffer changes every iteration.
+        #    Re-computing the mapping every time destroys any performance
+        #    advantage of the vectorised implementation.  We therefore cache
+        #    the CSR pointer + source index vector the *first* time they are
+        #    built and reuse them for subsequent ``FlatMultiTensor`` objects
+        #    created from the same multitensor layout.
+        # ------------------------------------------------------------------
+
+        # The cache **key** must uniquely identify the logical structure but
+        # remain hashable.  We combine:
+        #   • tuple(dims_list)          – 5-bit masks per slice (order matters)
+        #   • tuple(global_dim_lengths) – lengths of the 5 physical axes
+        # This is sufficient because shapes inside each slice are fully
+        # determined by these two pieces of information.
+
+        # Recover global axis lengths (examples, colours, dirs, x, y).
+        global_lengths = []
+        for i in range(NUM_DIMENSIONS):
+            for dims, shape in zip(self.dims_list, self.shapes):
+                if dims[i]:
+                    # Pick the first occurrence – all slices share the same
+                    # length along every physical axis.
+                    shape_idx = sum(dims[:i])  # position of this axis in shape
+                    global_lengths.append(shape[shape_idx])
+                    break
+        cache_key = (tuple(self.dims_list), tuple(global_lengths))
+
+        cached = FlatMultiTensor._share_up_cache.get(cache_key)
+        if cached is not None:
+            # Move cached tensors to the *current* device if needed.
+            self.src_rows = cached[0].to(self.data.device)
+            self.csr_ptr = cached[1].to(self.data.device)
+            return  # <-- done – no need to recompute
 
         # ------------------------------------------------------------------
         # Helper: recover the *global* length of every physical axis.  We scan
@@ -130,8 +172,20 @@ class FlatMultiTensor:
         N = int(self.data.shape[0])
 
         # Containers for the global metadata being built.
-        repeat_counts_list: List[int] = []
-        dst_rows_list: List[int] = []
+        # We no longer rely on per-source repeat counts during the actual
+        # communication step.  Instead, we construct two parallel lists that
+        # enumerate – _for every copy_ – the *source* row index and its
+        # *destination* row index.  These will later be sorted by destination
+        # so that we can build a CSR representation expected by
+        # ``torch_scatter.segment_csr``.
+
+        src_rows_list: List[int] = []  # (M,)
+        dst_rows_list: List[int] = []  # (M,)
+
+        # No need to accumulate per-source repeat counts in the new CSR path.
+        # We'll keep the variable name only to avoid refactoring larger loops,
+        # but it remains unused.
+        # repeat_counts_list: List[int] = []  # deprecated
 
         # ------------------------------------------------------------------
         # Iterate over *source* slices – this is the outermost iteration because
@@ -153,9 +207,10 @@ class FlatMultiTensor:
                     ancestor_indices.append(dst_idx)
 
             # ------------------------------------------------------------------
-            # Compute repeat_total[src] – sum of tile_factors over all ancestors.
+            # Compute per-ancestor tile_factors – product of lengths for axes
+            # that are in dst but not in src.  We no longer need the slice-wide
+            # repeat_total, only individual tile factors for enumeration.
             # ------------------------------------------------------------------
-            repeat_total = 0
             per_ancestor_tile_factors = {}
             for dst_idx in ancestor_indices:
                 dst_dims = self.dims_list[dst_idx]
@@ -165,10 +220,6 @@ class FlatMultiTensor:
                     if (not src_dims[ax]) and dst_dims[ax]:
                         tf *= dim_lengths[ax]
                 per_ancestor_tile_factors[dst_idx] = tf
-                repeat_total += tf
-
-            # Append slice-wide repeat_total into the global vector
-            repeat_counts_list.extend([repeat_total] * src_length)
 
             # ------------------------------------------------------------------
             # Enumerate destination rows for every *row* inside this slice.
@@ -203,6 +254,7 @@ class FlatMultiTensor:
                     if tf == 1:
                         # Fast-path: dst == src (same dims) → index is identical.
                         dst_rows_list.append(src_row_global)
+                        src_rows_list.append(src_row_global)
                         continue
 
                     # Axes that need to be enumerated (present in dst, absent in src)
@@ -228,14 +280,42 @@ class FlatMultiTensor:
                         flat_idx_in_slice = 0
                         for dim_pos, coord in enumerate(dst_coords_template):
                             flat_idx_in_slice += coord * dst_strides[dim_pos]
-                        dst_rows_list.append(dst_offset + flat_idx_in_slice)
+                        dst_global = dst_offset + flat_idx_in_slice
+                        dst_rows_list.append(dst_global)
+                        src_rows_list.append(src_row_global)
 
         # ----------------------------------------------------------------------
-        # Convert lists to tensors (int32 to save memory) and move to the same
-        # device as ``self.data``.
+        # Convert Python lists to tensors and *sort by destination row* so that
+        # we can build an efficient CSR pointer once and re-use it in every
+        # subsequent ``share_up`` call.
         # ----------------------------------------------------------------------
-        self.repeat_counts = torch.tensor(repeat_counts_list, dtype=torch.int32, device=self.data.device)
-        self.dst_rows = torch.tensor(dst_rows_list, dtype=torch.int32, device=self.data.device)
+        dst_tensor = torch.tensor(dst_rows_list, dtype=torch.int32, device=self.data.device)
+        src_tensor = torch.tensor(src_rows_list, dtype=torch.int32, device=self.data.device)
+
+        sort_idx = torch.argsort(dst_tensor)
+        dst_sorted = dst_tensor[sort_idx]
+        src_sorted = src_tensor[sort_idx]
+
+        # Build CSR pointer: counts per destination row → prefix sum.
+        counts = torch.bincount(dst_sorted, minlength=N).to(torch.int32)
+        ptr = torch.cat([torch.zeros(1, dtype=torch.int32, device=self.data.device), torch.cumsum(counts, dim=0)])
+
+        # Store metadata tensors – they will be reused by the fast path.
+        self.src_rows = src_sorted
+        self.csr_ptr = ptr
+
+        # ------------------------------------------------------------------
+        # 6) **Cache** the freshly computed metadata for reuse.
+        # ------------------------------------------------------------------
+        # Store CPU copies to maximise portability across devices; we'll move
+        # them to the correct device when loading from the cache.
+        FlatMultiTensor._share_up_cache[cache_key] = (
+            self.src_rows.cpu(),
+            self.csr_ptr.cpu(),
+        )
+
+        # No longer expose ``repeat_counts`` or ``dst_rows`` – the CSR metadata
+        # supersedes them.
 
 
 def flat_multitensor(mt, debug=False) -> FlatMultiTensor:

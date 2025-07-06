@@ -62,12 +62,11 @@ def test_meta(fn, fn_vec, **kwargs):
     Performance:
         Prints timing comparison and speedup factor between implementations.
     """
-    print(f"\n===== Testing {fn_vec.__name__} =====")
-    if kwargs:
-        print(f"With arguments: {kwargs}")
-    
+    print(f"\n===== Testing {fn_vec.__name__} =====")    
     MTs = create_mts()
+    start_time = time.time()
     FTs = [flat_multitensor(mt, debug=True) for mt in MTs]
+    print(f"Time taken to create multitensors: {time.time() - start_time:.4f}s")
     print(f"Testing with {len(MTs)} multitensors")
     
     for i, (mt, ft) in enumerate(zip(MTs, FTs)):
@@ -89,18 +88,24 @@ def test_meta(fn, fn_vec, **kwargs):
     num_runs=10
     print(f"Benchmarking performance with {num_runs} runs...")
     
+    # --- Regular implementation timing ---
+    torch.cuda.synchronize()
     start_time = time.time()
     for _ in range(num_runs):
         for mt in MTs:
             mt2 = fn(mt, **kwargs)
             flat_multitensor(mt2).data.sum().backward()
+    torch.cuda.synchronize()
     regular_time = time.time() - start_time
 
+    # --- Vectorized implementation timing ---
+    torch.cuda.synchronize()
     start_time = time.time()
     for _ in range(num_runs):
         for ft in FTs:
             ft2 = fn_vec(ft, **kwargs)
             ft2.data.sum().backward()
+    torch.cuda.synchronize()
     vectorized_time = time.time() - start_time
     
     print(f"Regular implementation: {regular_time:.4f}s")
