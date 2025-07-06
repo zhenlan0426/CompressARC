@@ -97,32 +97,21 @@ def affine(flat: FlatMultiTensor, weight, use_bias=False) -> FlatMultiTensor:
     )
 
 def share_up(flat: FlatMultiTensor) -> FlatMultiTensor:
-    """Vectorised **share-up** communication.
+    """Vectorized *share_up* operation implemented via a cached CSR SpMM.
 
-    The input ``flat`` must already contain the *down-projected* residual buffer
-    for *all* slices concatenated together.  The routine uses pre-computed
-    metadata inside ``FlatMultiTensor`` (``repeat_counts`` and ``dst_rows``)
-    to perform the scatter-add without any Python-level loops.
-
-    Returns a *new* ``FlatMultiTensor`` whose ``data`` tensor holds the
-    aggregated result.  All metadata (offsets, shapes, etc.) are reused so the
-    caller can continue to treat the output as a valid `FlatMultiTensor`.
+    The heavy lifting is delegated to a pre-built sparse matrix *S* (constructed
+    once by ``FlatMultiTensor.build_share_up_metadata``).  The forward pass then
+    reduces to a single call to ``torch.sparse.mm`` which is handled by
+    cuSPARSE/hipSPARSE and supports autograd out-of-the-box.
     """
-    # Ensure metadata present – it will be built exactly once per instance.
-    flat.build_share_up_metadata()
+    # Ensure the metadata (and thus the CSR matrix) is available
+    # flat.build_share_up_metadata()
+    S = flat._share_up_S  # (N, N) sparse CSR on the correct device
 
-    # --------------------------------------------------------------
-    # Fast path using CSR metadata (pre-computed once during initialisation).
-    # --------------------------------------------------------------
-    # 1. Gather *all* source contributions in the order expected by CSR.
-    src_expanded = flat.data[flat.src_rows.to(torch.long)]  # (M, C)
+    # Sparse matrix multiplication: (N, N) @ (N, C) → (N, C)
+    out_data = torch.sparse.mm(S, flat.data)
 
-    # 2. Aggregate into destination rows via ``segment_csr`` (no sorting or
-    #    additional indexing work is required).
-    out_data = segment_csr(src_expanded, flat.csr_ptr.to(torch.long), reduce="sum")
-
-    # Preserve type information by constructing a new FlatMultiTensor that
-    # re-uses all structural metadata from ``flat`` but replaces the data.
+    # Return a new FlatMultiTensor sharing all metadata but with the updated data
     return FlatMultiTensor(
         data=out_data,
         offsets=flat.offsets,
@@ -132,3 +121,4 @@ def share_up(flat: FlatMultiTensor) -> FlatMultiTensor:
         channel_dim=flat.channel_dim,
         row2slice=flat.row2slice,
     )
+

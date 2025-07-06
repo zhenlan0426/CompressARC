@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import itertools
 
 # Keep the same dimensional semantics: examples, colors, directions, x, y
@@ -38,6 +38,152 @@ class FlatMultiTensor:
     # ------------------------------------------------------------------
     _share_up_cache: dict = {}
 
+    def build_share_up_metadata(self):
+        """Construct (or fetch from cache) the CSR matrix *S* that realises the
+        ``share_up`` operation for the current *FlatMultiTensor* layout.
+
+        The matrix has shape (N, N) where *N = total_positions*.  Row *i*
+        gathers (sums) the rows of all ancestor slices *t* (those whose
+        dimension mask satisfies ``dims(t) \u2264 dims(s)``) that map to the
+        same logical coordinates as row *i* once broadcasting rules are taken
+        into account.
+
+        The build happens once on CPU and the result is cached at the
+        class-level so subsequent tensors that share the same metadata (i.e.
+        same ``dims_list``/``lengths`` ordering) can reuse it immediately.
+        """
+        # Already built for this instance – nothing to do.
+        if hasattr(self, "_share_up_S"):
+            return
+
+        # ------------------------------------------------------------------
+        # Decide on a cache key.  The pair (lengths, dims_list) uniquely
+        # identifies the logical layout irrespective of the *data* tensor.
+        # ------------------------------------------------------------------
+        key = (tuple(self.lengths.tolist()), tuple(self.dims_list))
+
+        # Fetch from cache if available
+        if key in FlatMultiTensor._share_up_cache:
+            self._share_up_S = FlatMultiTensor._share_up_cache[key].to(self.data.device)
+            return
+
+        # ------------------------------------------------------------------
+        # Derive global constants
+        # ------------------------------------------------------------------
+        N = int(self.data.shape[0])  # total rows across all slices
+
+        # Determine the length of each of the 5 logical axes (examples, colors,
+        # directions, x, y) by inspecting the recorded shapes.
+        axis_lengths = [None] * NUM_DIMENSIONS  # type: List[Optional[int]]
+        for dims, shape in zip(self.dims_list, self.shapes):
+            pos = 0
+            for axis in range(NUM_DIMENSIONS):
+                if dims[axis]:
+                    length_val = shape[pos]
+                    if axis_lengths[axis] is None:
+                        axis_lengths[axis] = length_val
+                    else:
+                        # Sanity check – layouts must be consistent across slices
+                        assert axis_lengths[axis] == length_val
+                    pos += 1
+        # Replace any still-None entries with 1 (should not occur)
+        axis_lengths = [l if l is not None else 1 for l in axis_lengths]
+
+        # ------------------------------------------------------------------
+        # Pre-compute per-slice helpers: mapping from logical axis -> (position
+        # within `shape`, stride) to convert between flattened index and
+        # multi-index coordinates quickly.
+        # ------------------------------------------------------------------
+        slice_axis_meta = []  # list[dict[axis -> (pos_in_shape, stride)]]
+        for dims, shape in zip(self.dims_list, self.shapes):
+            # Compute strides under row-major (C) order for this *shape*.
+            strides_c = []
+            stride_val = 1
+            for length_val in reversed(shape):
+                strides_c.append(stride_val)
+                stride_val *= length_val
+            strides_c = list(reversed(strides_c))
+
+            axis_info = {}
+            pos = 0
+            for axis in range(NUM_DIMENSIONS):
+                if dims[axis]:
+                    axis_info[axis] = (pos, strides_c[pos])
+                    pos += 1
+            slice_axis_meta.append(axis_info)
+
+        # ------------------------------------------------------------------
+        # Pre-compute ancestor list for each slice (dims(t) <= dims(s)).
+        # ------------------------------------------------------------------
+        ancestor_lists = []  # list[list[int]]
+        for s_dims in self.dims_list:
+            ancestors = [t_idx for t_idx, t_dims in enumerate(self.dims_list)
+                         if all(t <= s for t, s in zip(t_dims, s_dims))]
+            ancestor_lists.append(ancestors)
+
+        # ------------------------------------------------------------------
+        # Build CSR data structures row-by-row.
+        # ------------------------------------------------------------------
+        indptr: List[int] = [0]
+        indices: List[int] = []
+
+        for global_row in range(N):
+            # Identify destination slice and local index within that slice
+            dest_slice_idx = int(self.row2slice[global_row].item())
+            dest_local_idx = global_row - int(self.offsets[dest_slice_idx].item())
+
+            # Extract helpers for this destination slice
+            axis_info = slice_axis_meta[dest_slice_idx]
+            shape_dest = self.shapes[dest_slice_idx]
+            strides_dest = [stride for _, stride in sorted(axis_info.values(), key=lambda x: x[0])]
+
+            # --------------------------------------------------------------
+            # Convert dest_local_idx -> coordinate list for axes present in
+            # destination slice (row-major unravel).
+            # --------------------------------------------------------------
+            coords_present = []
+            remainder = dest_local_idx
+            for stride_val, dim_len in zip(strides_dest, shape_dest):
+                coord = remainder // stride_val
+                coords_present.append(coord)
+                remainder = remainder % stride_val
+
+            # Map present-axis coordinates to global 5-D coordinate array.
+            coords = [0] * NUM_DIMENSIONS
+            pos = 0
+            for axis in range(NUM_DIMENSIONS):
+                if self.dims_list[dest_slice_idx][axis]:
+                    coords[axis] = coords_present[pos]
+                    pos += 1
+
+            # Iterate over all ancestor slices and compute corresponding source
+            # global column indices.
+            for anc_idx in ancestor_lists[dest_slice_idx]:
+                anc_axis_info = slice_axis_meta[anc_idx]
+                src_local_idx = 0
+                # Accumulate using row-major strides
+                for axis in range(NUM_DIMENSIONS):
+                    if self.dims_list[anc_idx][axis]:
+                        pos_in_shape, stride_val = anc_axis_info[axis]
+                        src_local_idx += coords[axis] * stride_val
+                src_global_idx = int(self.offsets[anc_idx].item()) + src_local_idx
+                indices.append(src_global_idx)
+
+            indptr.append(len(indices))
+
+        # ------------------------------------------------------------------
+        # Assemble CSR tensor and cache it.
+        # ------------------------------------------------------------------
+        indptr_t = torch.tensor(indptr, dtype=torch.int64)
+        indices_t = torch.tensor(indices, dtype=torch.int64)
+        values_t = torch.ones(indices_t.numel(), dtype=self.data.dtype)
+
+        csr = torch.sparse_csr_tensor(indptr_t, indices_t, values_t, size=(N, N))
+
+        # Store CPU version in global cache and device-specific version on instance
+        FlatMultiTensor._share_up_cache[key] = csr.cpu()
+        self._share_up_S = csr.to(self.data.device)
+
     # ---------------------------------------------------------------------
     # Convenience helpers
     # ---------------------------------------------------------------------
@@ -66,256 +212,6 @@ class FlatMultiTensor:
         for idx, dims in enumerate(self.dims_list):
             result[tuple(dims)] = self.view(idx)
         return result
-
-    def build_share_up_metadata(self):
-        """Pre-compute the tensors required by the vectorised ``share_up`` routine.
-
-        The method follows **Step 1** from ``share_up_vectorized.md``:
-
-        1.  Compute the per-slice repeat totals ``repeat_total[t]`` – how many
-            times every *row* inside slice *t* must be duplicated so that it can
-            be scattered to *all* of its ancestor slices (including itself).
-        2.  Construct a length-``N`` vector ``repeat_counts`` that lists
-            ``repeat_total[t]`` *for every row* of slice *t*, respecting the
-            global (source-row) ordering of the flat buffer.
-        3.  Enumerate the explicit destination row indices ``dst_rows`` for the
-            repeated rows.  These indices are produced **in the same order** as
-            they will appear after ``torch.repeat_interleave`` is applied to the
-            source buffer with ``repeat_counts`` – i.e. we iterate *slice → row
-            → copy*.
-
-        The resulting int32 tensors are stored as:
-            • ``self.repeat_counts`` – shape ``(N,)``
-            • ``self.dst_rows``     – shape ``(M,)``, where ``M = repeat_counts.sum()``
-        """
-        # Re-entry guard – if metadata is already attached to *this* instance.
-        if hasattr(self, "csr_ptr") and self.csr_ptr is not None:
-            return
-
-        # ------------------------------------------------------------------
-        # 0) Try to **reuse** cached metadata.  The structural layout of the
-        #    tensor system (dims_list + per-axis lengths) is invariant across
-        #    training steps, while the *data* buffer changes every iteration.
-        #    Re-computing the mapping every time destroys any performance
-        #    advantage of the vectorised implementation.  We therefore cache
-        #    the CSR pointer + source index vector the *first* time they are
-        #    built and reuse them for subsequent ``FlatMultiTensor`` objects
-        #    created from the same multitensor layout.
-        # ------------------------------------------------------------------
-
-        # The cache **key** must uniquely identify the logical structure but
-        # remain hashable.  We combine:
-        #   • tuple(dims_list)          – 5-bit masks per slice (order matters)
-        #   • tuple(global_dim_lengths) – lengths of the 5 physical axes
-        # This is sufficient because shapes inside each slice are fully
-        # determined by these two pieces of information.
-
-        # Recover global axis lengths (examples, colours, dirs, x, y).
-        global_lengths = []
-        for i in range(NUM_DIMENSIONS):
-            for dims, shape in zip(self.dims_list, self.shapes):
-                if dims[i]:
-                    # Pick the first occurrence – all slices share the same
-                    # length along every physical axis.
-                    shape_idx = sum(dims[:i])  # position of this axis in shape
-                    global_lengths.append(shape[shape_idx])
-                    break
-        cache_key = (tuple(self.dims_list), tuple(global_lengths))
-
-        cached = FlatMultiTensor._share_up_cache.get(cache_key)
-        if cached is not None:
-            # Move cached tensors to the *current* device if needed.
-            self.src_rows = cached[0].to(self.data.device)
-            self.csr_ptr = cached[1].to(self.data.device)
-            return  # <-- done – no need to recompute
-
-        # ------------------------------------------------------------------
-        # Helper: recover the *global* length of every physical axis.  We scan
-        # the existing slice shapes – all slices share the same length per axis
-        # so we just pick the first occurrence.
-        # ------------------------------------------------------------------
-        dim_lengths = [None] * NUM_DIMENSIONS  # examples, colours, dirs, x, y
-        for dims, shape in zip(self.dims_list, self.shapes):
-            shape_idx = 0
-            for axis in range(NUM_DIMENSIONS):
-                if dims[axis]:
-                    if dim_lengths[axis] is None:
-                        dim_lengths[axis] = shape[shape_idx]
-                    shape_idx += 1
-            if all(l is not None for l in dim_lengths):
-                break  # all discovered
-        if any(l is None for l in dim_lengths):
-            raise RuntimeError("Failed to infer global axis lengths from slices.")
-
-        # Pre-compute strides for every slice so that we can convert between
-        # flat row indices <–> multi-dim coordinates efficiently.
-        slice_strides = []  # list[ list[int] ] parallel to self.shapes
-        for shape in self.shapes:
-            strides = []
-            running = 1
-            for length in reversed(shape):
-                strides.insert(0, running)
-                running *= length
-            slice_strides.append(strides)
-
-        # Convenience: fast lookup – axis index -> (shape_index_in_slice)
-        axis_to_shape_idx = []  # list[ dict[int, int] ] per slice
-        for dims in self.dims_list:
-            mapping = {}
-            shape_pos = 0
-            for axis in range(NUM_DIMENSIONS):
-                if dims[axis]:
-                    mapping[axis] = shape_pos
-                    shape_pos += 1
-            axis_to_shape_idx.append(mapping)
-
-        N = int(self.data.shape[0])
-
-        # Containers for the global metadata being built.
-        # We no longer rely on per-source repeat counts during the actual
-        # communication step.  Instead, we construct two parallel lists that
-        # enumerate – _for every copy_ – the *source* row index and its
-        # *destination* row index.  These will later be sorted by destination
-        # so that we can build a CSR representation expected by
-        # ``torch_scatter.segment_csr``.
-
-        src_rows_list: List[int] = []  # (M,)
-        dst_rows_list: List[int] = []  # (M,)
-
-        # No need to accumulate per-source repeat counts in the new CSR path.
-        # We'll keep the variable name only to avoid refactoring larger loops,
-        # but it remains unused.
-        # repeat_counts_list: List[int] = []  # deprecated
-
-        # ------------------------------------------------------------------
-        # Iterate over *source* slices – this is the outermost iteration because
-        # both ``repeat_counts`` and ``dst_rows`` have to be ordered by source
-        # rows.
-        # ------------------------------------------------------------------
-        for src_idx, src_dims in enumerate(self.dims_list):
-            src_offset = int(self.offsets[src_idx].item())
-            src_length = int(self.lengths[src_idx].item())
-            src_shape = self.shapes[src_idx]
-            src_strides = slice_strides[src_idx]
-            src_axis_map = axis_to_shape_idx[src_idx]
-
-            # Identify *ancestor* slices – those whose dims superset src_dims.
-            ancestor_indices = []
-            for dst_idx, dst_dims in enumerate(self.dims_list):
-                is_ancestor = all((not src_dims[ax]) or dst_dims[ax] for ax in range(NUM_DIMENSIONS))
-                if is_ancestor:
-                    ancestor_indices.append(dst_idx)
-
-            # ------------------------------------------------------------------
-            # Compute per-ancestor tile_factors – product of lengths for axes
-            # that are in dst but not in src.  We no longer need the slice-wide
-            # repeat_total, only individual tile factors for enumeration.
-            # ------------------------------------------------------------------
-            per_ancestor_tile_factors = {}
-            for dst_idx in ancestor_indices:
-                dst_dims = self.dims_list[dst_idx]
-                # tile_factor = product of lengths for axes that are in dst but not in src
-                tf = 1
-                for ax in range(NUM_DIMENSIONS):
-                    if (not src_dims[ax]) and dst_dims[ax]:
-                        tf *= dim_lengths[ax]
-                per_ancestor_tile_factors[dst_idx] = tf
-
-            # ------------------------------------------------------------------
-            # Enumerate destination rows for every *row* inside this slice.
-            # ------------------------------------------------------------------
-            # Precompute coordinate arrays for the source slice to avoid repeated
-            # div/mod in innermost loops.  We convert every flat row idx -> list
-            # of coords (len = |src_dims|).
-            if src_length > 0:
-                coords_tensor = torch.arange(src_length, dtype=torch.long)
-                coords_list = [[] for _ in range(src_length)]
-                for axis_pos, length in enumerate(src_shape):
-                    stride = src_strides[axis_pos]
-                    coord_vals = coords_tensor // stride
-                    coords_tensor = coords_tensor % stride
-                    for r in range(src_length):
-                        coords_list[r].append(int(coord_vals[r].item()))
-
-            # Iterate rows in *source-row* order.
-            for local_row_idx in range(src_length):
-                src_row_global = src_offset + local_row_idx
-                src_coords = coords_list[local_row_idx]
-
-                # For each ancestor slice produce its contribution indices.
-                for dst_idx in ancestor_indices:
-                    dst_dims = self.dims_list[dst_idx]
-                    dst_offset = int(self.offsets[dst_idx].item())
-                    dst_shape = self.shapes[dst_idx]
-                    dst_strides = slice_strides[dst_idx]
-                    dst_axis_map = axis_to_shape_idx[dst_idx]
-
-                    tf = per_ancestor_tile_factors[dst_idx]
-                    if tf == 1:
-                        # Fast-path: dst == src (same dims) → index is identical.
-                        dst_rows_list.append(src_row_global)
-                        src_rows_list.append(src_row_global)
-                        continue
-
-                    # Axes that need to be enumerated (present in dst, absent in src)
-                    missing_axes = [ax for ax in range(NUM_DIMENSIONS) if (not src_dims[ax]) and dst_dims[ax]]
-
-                    # Prepare coordinate template – will fill in missing axes later.
-                    dst_coords_template = [None] * len(dst_shape)
-                    # Copy shared axis coordinates from src.
-                    for ax in range(NUM_DIMENSIONS):
-                        if src_dims[ax]:
-                            dst_shape_idx = dst_axis_map[ax]
-                            src_shape_idx = src_axis_map[ax]
-                            dst_coords_template[dst_shape_idx] = src_coords[src_shape_idx]
-
-                    # Enumerate cartesian product over missing axes.
-                    missing_axes_shape_idxs = [dst_axis_map[ax] for ax in missing_axes]
-                    missing_axes_lengths = [dim_lengths[ax] for ax in missing_axes]
-
-                    for prod_coords in itertools.product(*[range(l) for l in missing_axes_lengths]):
-                        for idx, coord in enumerate(prod_coords):
-                            dst_coords_template[missing_axes_shape_idxs[idx]] = coord
-                        # Now compute flat index in dst slice.
-                        flat_idx_in_slice = 0
-                        for dim_pos, coord in enumerate(dst_coords_template):
-                            flat_idx_in_slice += coord * dst_strides[dim_pos]
-                        dst_global = dst_offset + flat_idx_in_slice
-                        dst_rows_list.append(dst_global)
-                        src_rows_list.append(src_row_global)
-
-        # ----------------------------------------------------------------------
-        # Convert Python lists to tensors and *sort by destination row* so that
-        # we can build an efficient CSR pointer once and re-use it in every
-        # subsequent ``share_up`` call.
-        # ----------------------------------------------------------------------
-        dst_tensor = torch.tensor(dst_rows_list, dtype=torch.int32, device=self.data.device)
-        src_tensor = torch.tensor(src_rows_list, dtype=torch.int32, device=self.data.device)
-
-        sort_idx = torch.argsort(dst_tensor)
-        dst_sorted = dst_tensor[sort_idx]
-        src_sorted = src_tensor[sort_idx]
-
-        # Build CSR pointer: counts per destination row → prefix sum.
-        counts = torch.bincount(dst_sorted, minlength=N).to(torch.int32)
-        ptr = torch.cat([torch.zeros(1, dtype=torch.int32, device=self.data.device), torch.cumsum(counts, dim=0)])
-
-        # Store metadata tensors – they will be reused by the fast path.
-        self.src_rows = src_sorted
-        self.csr_ptr = ptr
-
-        # ------------------------------------------------------------------
-        # 6) **Cache** the freshly computed metadata for reuse.
-        # ------------------------------------------------------------------
-        # Store CPU copies to maximise portability across devices; we'll move
-        # them to the correct device when loading from the cache.
-        FlatMultiTensor._share_up_cache[cache_key] = (
-            self.src_rows.cpu(),
-            self.csr_ptr.cpu(),
-        )
-
-        # No longer expose ``repeat_counts`` or ``dst_rows`` – the CSR metadata
-        # supersedes them.
 
 
 def flat_multitensor(mt, debug=False) -> FlatMultiTensor:
@@ -378,11 +274,26 @@ def flat_multitensor(mt, debug=False) -> FlatMultiTensor:
 
 
 def unpack_flat(flat: FlatMultiTensor, multitensor_system):
-    """Convert a ``FlatMultiTensor`` back into the nested list structure.
+    """Convert a ``FlatMultiTensor`` back into the nested `MultiTensor` structure.
 
-    Returns a new ``MultiTensor`` instance filled with cloned tensors.
+    Creates a fresh `MultiTensor` instance with the same layout as
+    *multitensor_system* and fills it with copies of each logical slice that is
+    currently stored in *flat*.
+
+    Parameters
+    ----------
+    flat : FlatMultiTensor
+        The flat representation to unpack.
+    multitensor_system : multitensor_systems.MultiTensorSystem
+        The system providing the target nested layout.
+
+    Returns
+    -------
+    multitensor_systems.MultiTensor
+        A new `MultiTensor` instance whose leaves hold clones of the tensors
+        from *flat*.
     """
     nested = multitensor_system.make_multitensor(default=None)
     for idx, dims in enumerate(flat.dims_list):
         nested[dims] = flat.view(idx).clone()
-    return nested 
+    return nested
