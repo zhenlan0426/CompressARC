@@ -95,3 +95,48 @@ def affine(flat: FlatMultiTensor, weight, use_bias=False) -> FlatMultiTensor:
         channel_dim=flat.channel_dim,
         row2slice=flat.row2slice,
     )
+
+def share_up(flat: FlatMultiTensor) -> FlatMultiTensor:
+    """Vectorised **share-up** communication.
+
+    The input ``flat`` must already contain the *down-projected* residual buffer
+    for *all* slices concatenated together.  The routine uses pre-computed
+    metadata inside ``FlatMultiTensor`` (``repeat_counts`` and ``dst_rows``)
+    to perform the scatter-add without any Python-level loops.
+
+    Returns a *new* ``FlatMultiTensor`` whose ``data`` tensor holds the
+    aggregated result.  All metadata (offsets, shapes, etc.) are reused so the
+    caller can continue to treat the output as a valid `FlatMultiTensor`.
+    """
+    # Ensure metadata present – it will be built exactly once per instance.
+    flat.build_share_up_metadata()
+
+    # --------------------------------------------------------------
+    # 1. Duplicate source rows according to pre-computed repeat counts.
+    # --------------------------------------------------------------
+    # src_expanded has shape (M, C) where M = repeat_counts.sum().
+    src_expanded = torch.repeat_interleave(flat.data, flat.repeat_counts.to(torch.long), dim=0)
+
+    # --------------------------------------------------------------
+    # 2. Scatter-add into destination rows (segment_coo requires the index
+    #    tensor to be sorted in *non-decreasing* order).
+    # --------------------------------------------------------------
+    # Ensure destination indices are in the required ``torch.long`` dtype.
+    dst_rows_long = flat.dst_rows.to(torch.long)
+
+    idx_sorted = torch.argsort(dst_rows_long)
+    dst_sorted = dst_rows_long[idx_sorted]
+    src_sorted = src_expanded[idx_sorted]
+    out_data = segment_coo(src_sorted, dst_sorted, dim_size=flat.data.shape[0], reduce="sum")
+
+    # Preserve type information by constructing a new FlatMultiTensor that
+    # re-uses all structural metadata from ``flat`` but replaces the data.
+    return FlatMultiTensor(
+        data=out_data,
+        offsets=flat.offsets,
+        lengths=flat.lengths,
+        shapes=flat.shapes,
+        dims_list=flat.dims_list,
+        channel_dim=flat.channel_dim,
+        row2slice=flat.row2slice,
+    )

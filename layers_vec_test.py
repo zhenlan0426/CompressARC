@@ -30,7 +30,6 @@ def create_mts(channel_dim=16, n_tasks=5):
         mean = torch.randn(shape,device='cuda')
         mean.requires_grad=True
         return mean
-
     for task in tasks:
         multitensor_system = task.multitensor_system
         mt = init(multitensor_system.make_multitensor(channel_dim), multitensor_system, channel_dim)
@@ -110,5 +109,6 @@ def test_meta(fn, fn_vec, **kwargs):
     print("=" * 50)
 
 
-test_meta(layers.normalize, layers_vec.normalize)
+# test_meta(layers.normalize, layers_vec.normalize)
 # test_meta(layers.affine, layers_vec.affine, weight=(torch.randn(16, 16, device='cuda'),torch.randn(16, device='cuda')))
+test_meta(layers.share_up, layers_vec.share_up)
