@@ -29,19 +29,21 @@ def normalize(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
     Returns:
         FlatMultiTensor with normalized data
     """
-    
+    # TODO: improve performance, right now it's slower than the regular implementation
     n_slices = len(flat.dims_list)
     
     # Use pre-computed row2slice mapping
     row2slice = flat.row2slice
+    slice_lengths = flat.lengths
     
     # Compute per-slice statistics using scatter_mean
     if debias:
         # Compute mean per slice per channel: shape (n_slices, channel_dim)
         slice_means = scatter_mean(flat.data, row2slice, dim=0, dim_size=n_slices)
         
-        # Subtract mean from each position
-        centered_data = flat.data - slice_means[row2slice]
+        # Subtract mean from each position using efficient broadcasting
+        broadcast_means = torch.repeat_interleave(slice_means, slice_lengths, dim=0)
+        centered_data = flat.data - broadcast_means
         
         # Compute variance from centered data
         variance_data = centered_data ** 2
@@ -57,8 +59,9 @@ def normalize(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
     eps = 1e-8
     slice_stds = torch.sqrt(slice_vars + eps)
     
-    # Normalize: divide centered data by standard deviation
-    normalized_data = centered_data / slice_stds[row2slice]
+    # Normalize: divide centered data by standard deviation using efficient broadcasting
+    broadcast_stds = torch.repeat_interleave(slice_stds, slice_lengths, dim=0)
+    normalized_data = centered_data / broadcast_stds
     
     # Create new FlatMultiTensor with normalized data - avoid unnecessary copying
     return FlatMultiTensor(
@@ -71,3 +74,24 @@ def normalize(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
         row2slice=flat.row2slice,
     )
 
+def affine(flat: FlatMultiTensor, weight, use_bias=False) -> FlatMultiTensor:
+    """
+    Apply a linear layer to a tensor, along the channel dimension.
+    Args:
+        x (Tensor): Input to the linear layer.
+        weight (list[Tensor]): A weight matrix and a bias vector.
+    Returns:
+        Tensor: Output of the linear layer.
+    """
+    x = torch.matmul(flat.data, weight[0])
+    if use_bias:
+        x = x + weight[1]
+    return FlatMultiTensor(
+        data=x,
+        offsets=flat.offsets,
+        lengths=flat.lengths,
+        shapes=flat.shapes,
+        dims_list=flat.dims_list,
+        channel_dim=flat.channel_dim,
+        row2slice=flat.row2slice,
+    )
