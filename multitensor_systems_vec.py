@@ -122,61 +122,77 @@ class FlatMultiTensor:
             ancestor_lists.append(ancestors)
 
         # ------------------------------------------------------------------
-        # Build CSR data structures row-by-row.
+        # Build CSR data structures **much faster** by vectorising over each
+        # slice instead of iterating row-by-row in Python.  This reduces the
+        # Python-level loop count from *total_positions* to *num_slices*.
         # ------------------------------------------------------------------
         indptr: List[int] = [0]
-        indices: List[int] = []
+        indices_blocks: List[torch.Tensor] = []
+        running_nnz = 0
+        cpu_device = torch.device("cpu")
 
-        for global_row in range(N):
-            # Identify destination slice and local index within that slice
-            dest_slice_idx = int(self.row2slice[global_row].item())
-            dest_local_idx = global_row - int(self.offsets[dest_slice_idx].item())
+        for s_idx, (offset_s, length_s, dims_s, shape_s) in enumerate(
+            zip(self.offsets.tolist(), self.lengths.tolist(), self.dims_list, self.shapes)
+        ):
+            ancestors = ancestor_lists[s_idx]
+            n_anc = len(ancestors)
+            if n_anc == 0 or length_s == 0:
+                # Should never happen but guard for safety
+                indptr.extend([indptr[-1]] * length_s)
+                continue
 
-            # Extract helpers for this destination slice
-            axis_info = slice_axis_meta[dest_slice_idx]
-            shape_dest = self.shapes[dest_slice_idx]
-            strides_dest = [stride for _, stride in sorted(axis_info.values(), key=lambda x: x[0])]
+            # Vector of local indices 0 .. length_s-1
+            dest_local_idx = torch.arange(length_s, dtype=torch.int64, device=cpu_device)
 
-            # --------------------------------------------------------------
-            # Convert dest_local_idx -> coordinate list for axes present in
-            # destination slice (row-major unravel).
-            # --------------------------------------------------------------
-            coords_present = []
-            remainder = dest_local_idx
-            for stride_val, dim_len in zip(strides_dest, shape_dest):
-                coord = remainder // stride_val
-                coords_present.append(coord)
+            # Compute per-axis coordinates for destination slice
+            axis_info = slice_axis_meta[s_idx]
+            present_axes = [axis for axis in range(NUM_DIMENSIONS) if dims_s[axis]]
+            strides_dest = torch.tensor(
+                [axis_info[axis][1] for axis in present_axes], dtype=torch.int64, device=cpu_device
+            )
+
+            remainder = dest_local_idx.unsqueeze(1)  # (L, 1)
+            coords_present = torch.empty(length_s, len(strides_dest), dtype=torch.int64, device=cpu_device)
+            for col, stride_val in enumerate(strides_dest):
+                coords_present[:, col] = remainder[:, 0] // stride_val
                 remainder = remainder % stride_val
 
-            # Map present-axis coordinates to global 5-D coordinate array.
-            coords = [0] * NUM_DIMENSIONS
+            # Map to full 5-D global coordinates
+            coords_all = torch.zeros(length_s, NUM_DIMENSIONS, dtype=torch.int64, device=cpu_device)
             pos = 0
-            for axis in range(NUM_DIMENSIONS):
-                if self.dims_list[dest_slice_idx][axis]:
-                    coords[axis] = coords_present[pos]
-                    pos += 1
+            for axis in present_axes:
+                coords_all[:, axis] = coords_present[:, pos]
+                pos += 1
 
-            # Iterate over all ancestor slices and compute corresponding source
-            # global column indices.
-            for anc_idx in ancestor_lists[dest_slice_idx]:
-                anc_axis_info = slice_axis_meta[anc_idx]
-                src_local_idx = 0
-                # Accumulate using row-major strides
-                for axis in range(NUM_DIMENSIONS):
-                    if self.dims_list[anc_idx][axis]:
-                        pos_in_shape, stride_val = anc_axis_info[axis]
-                        src_local_idx += coords[axis] * stride_val
-                src_global_idx = int(self.offsets[anc_idx].item()) + src_local_idx
-                indices.append(src_global_idx)
+            # Build indices for all ancestors in a vectorised manner
+            src_globals_per_anc = []
+            for anc_idx in ancestors:
+                anc_info = slice_axis_meta[anc_idx]
+                anc_axes = [axis for axis in range(NUM_DIMENSIONS) if self.dims_list[anc_idx][axis]]
+                anc_strides = torch.tensor(
+                    [anc_info[axis][1] for axis in anc_axes], dtype=torch.int64, device=cpu_device
+                )
+                src_local_idx = (coords_all[:, anc_axes] * anc_strides).sum(dim=1)
+                src_global_idx = src_local_idx + int(self.offsets[anc_idx].item())
+                src_globals_per_anc.append(src_global_idx)
 
-            indptr.append(len(indices))
+            # Stack to shape (L, n_anc) then flatten row-major
+            src_globals_mat = torch.stack(src_globals_per_anc, dim=1)  # (L, n_anc)
+            indices_block = src_globals_mat.reshape(-1)  # row-major flatten
+            indices_blocks.append(indices_block)
+
+            # Update indptr entries for these rows
+            indptr.extend((running_nnz + (torch.arange(1, length_s + 1, dtype=torch.int64, device=cpu_device) * n_anc)).tolist())
+            running_nnz += length_s * n_anc
+
+        # Concatenate all index blocks from every slice
+        indices_t = torch.cat(indices_blocks).to(cpu_device)
 
         # ------------------------------------------------------------------
         # Assemble CSR tensor and cache it.
         # ------------------------------------------------------------------
-        indptr_t = torch.tensor(indptr, dtype=torch.int64)
-        indices_t = torch.tensor(indices, dtype=torch.int64)
-        values_t = torch.ones(indices_t.numel(), dtype=self.data.dtype)
+        indptr_t = torch.tensor(indptr, dtype=torch.int64, device=cpu_device)
+        values_t = torch.ones(indices_t.numel(), dtype=self.data.dtype, device=cpu_device)
 
         csr = torch.sparse_csr_tensor(indptr_t, indices_t, values_t, size=(N, N))
 
