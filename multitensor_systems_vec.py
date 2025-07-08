@@ -22,6 +22,7 @@ class FlatMultiTensor:
         shapes: List[List[int]],           # list of full spatial shapes (len = n_slices)
         dims_list: List[Tuple[int, ...]],  # list of the 5-bit masks that identify each slice
         channel_dim: int,
+        indptr: torch.Tensor = None,
     ):
         self.data = data
         self.offsets = offsets
@@ -29,14 +30,28 @@ class FlatMultiTensor:
         self.shapes = shapes
         self.dims_list = dims_list
         self.channel_dim = channel_dim
-        # Pre-compute CSR indptr for segment_csr operations
-        self.indptr = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, dim=0)])
+        if indptr is None:
+            # Pre-compute CSR indptr for segment_csr operations
+            self.indptr = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, dim=0)])
+        else:
+            self.indptr = indptr
         self.build_share_up_metadata()
 
     # ------------------------------------------------------------------
     # Class-level cache for expensive share-up metadata.
     # ------------------------------------------------------------------
     _share_up_cache: dict = {}
+
+    def __add__(self, other):
+        return FlatMultiTensor(
+            data=self.data + other.data,
+            offsets=self.offsets,
+            lengths=self.lengths,
+            shapes=self.shapes,
+            dims_list=self.dims_list,
+            channel_dim=self.channel_dim,
+            indptr=self.indptr,
+        )
 
     def build_share_up_metadata(self):
         """Construct (or fetch from cache) the CSR matrix *S* that realises the

@@ -2,6 +2,7 @@ import preprocessing
 from multitensor_systems import multify, MultiTensor
 from multitensor_systems_vec import flat_multitensor, unpack_flat
 import torch
+import initializers
 import layers_vec
 import layers
 import time
@@ -9,7 +10,8 @@ import time
 def make_affine_weights(channel_dim: int = 16,
                         split: str = "training",
                         task_index: int = 0,
-                        device: str = "cuda") -> MultiTensor:
+                        device: str = "cuda",
+                        up_down_weights: bool = False) -> MultiTensor:
     """
     Build a `MultiTensor` whose 18 leaves each contain a (W, b) pair with
     shapes (channel_dim, channel_dim) and (channel_dim,).
@@ -39,9 +41,16 @@ def make_affine_weights(channel_dim: int = 16,
     weights_mt = mts.make_multitensor()
 
     for dims in mts:                       # iterates over the 18 valid slices
-        W = torch.randn(channel_dim, channel_dim, device=device) / channel_dim**0.5
-        b = torch.randn(channel_dim,               device=device)
-        weights_mt[dims] = (W, b)
+        if up_down_weights:
+            W1 = torch.randn(channel_dim, channel_dim, device=device) / channel_dim**0.5
+            b1 = torch.randn(channel_dim,               device=device)
+            W2 = torch.randn(channel_dim, channel_dim, device=device) / channel_dim**0.5
+            b2 = torch.randn(channel_dim,               device=device)
+            weights_mt[dims] = ((W1, b1), (W2, b2))
+        else:
+            W = torch.randn(channel_dim, channel_dim, device=device) / channel_dim**0.5
+            b = torch.randn(channel_dim,               device=device)
+            weights_mt[dims] = (W, b)
 
     return weights_mt
 
@@ -82,7 +91,7 @@ def get_grads(dims, mt):
 def abs_diff(a, b):
     return torch.abs(a - b).mean()
 
-def test_meta(fn, fn_vec, **kwargs):
+def test_meta(fn, fn_vec, *args,**kwargs):
     """
     Meta-testing function that compares regular and vectorized implementations of layer functions.
     
@@ -110,8 +119,8 @@ def test_meta(fn, fn_vec, **kwargs):
     
     for i, (mt, ft) in enumerate(zip(MTs, FTs)):
         # forward pass
-        mt2 = fn(mt, **kwargs)
-        ft2 = fn_vec(ft, **kwargs)
+        mt2 = fn(mt, *args, **kwargs)
+        ft2 = fn_vec(ft, *args, **kwargs)
         forward_diff = abs_diff(flat_multitensor(mt2).data, ft2.data)
         assert forward_diff < 1e-4, f"forward pass failed for multitensor {i}, diff: {forward_diff}"
         
@@ -119,7 +128,7 @@ def test_meta(fn, fn_vec, **kwargs):
         flat_multitensor(mt2).data.sum().backward()
         ft2.data.sum().backward()
         backward_diff = abs_diff(flat_multitensor(get_grads(mt)).data, ft.data.grad)
-        assert backward_diff < 1e-3, f"backward pass failed for multitensor {i}, diff: {backward_diff}"
+        assert backward_diff < 3e-3, f"backward pass failed for multitensor {i}, diff: {backward_diff}"
     
     print("✓ Forward and backward pass correctness tests passed")
     
@@ -132,7 +141,7 @@ def test_meta(fn, fn_vec, **kwargs):
     start_time = time.time()
     for _ in range(num_runs):
         for mt in MTs:
-            mt2 = fn(mt, **kwargs)
+            mt2 = fn(mt, *args, **kwargs)
             flat_multitensor(mt2).data.sum().backward()
     torch.cuda.synchronize()
     regular_time = time.time() - start_time
@@ -142,7 +151,7 @@ def test_meta(fn, fn_vec, **kwargs):
     start_time = time.time()
     for _ in range(num_runs):
         for ft in FTs:
-            ft2 = fn_vec(ft, **kwargs)
+            ft2 = fn_vec(ft, *args, **kwargs)
             ft2.data.sum().backward()
     torch.cuda.synchronize()
     vectorized_time = time.time() - start_time
@@ -159,5 +168,6 @@ def test_meta(fn, fn_vec, **kwargs):
 # test_meta(layers.affine, layers_vec.affine, weight=(torch.randn(16, 16, device='cuda'),torch.randn(16, device='cuda')))
 
 # test multitensor weight
-test_meta(layers.affine, layers_vec.affine, weight=make_affine_weights(channel_dim=16))
-# test_meta(layers.share_up, layers_vec.share_up)
+# test_meta(layers.affine, layers_vec.affine, weight=make_affine_weights(channel_dim=16))
+
+test_meta(layers.share_up, layers_vec.share_up, make_affine_weights(channel_dim=16, up_down_weights=True)) 

@@ -6,6 +6,8 @@ import numpy as np
 
 from multitensor_systems_vec import FlatMultiTensor
 from multitensor_systems import MultiTensor
+import multitensor_systems
+from functools import partial
 
 """
 Vectorized implementations of layers that operate on FlatMultiTensor.
@@ -15,6 +17,33 @@ This file contains GPU-friendly versions of operations from layers.py.
 np.random.seed(0)
 torch.manual_seed(0)
 
+def add_residual(layer, use_bias=False, pre_norm=False, post_norm=False):
+    """
+    Surround a layer/operation with a residual connection, up and down projections,
+    and pre/post-norms.
+    Args:
+        layer (Callable): The layer/operation to modify.
+    Returns:
+        Callable: Another layer/operation that applies the original layer with the
+                above modifications.
+    """
+    def layer_with_residual(x, residual_weights, *args,
+                            use_bias=use_bias, pre_norm=pre_norm, post_norm=post_norm, **kwargs):
+        if isinstance(residual_weights, MultiTensor):
+            down_project_weights = multitensor_systems.multify(lambda dims, weights: weights[0])(residual_weights)
+            up_project_weights = multitensor_systems.multify(lambda dims, weights: weights[1])(residual_weights)
+        else:
+            down_project_weights = residual_weights[0]
+            up_project_weights = residual_weights[1]
+        if pre_norm:
+            z = normalize(x)
+        z = affine(x, down_project_weights, use_bias=use_bias)
+        z = layer(z, *args, **kwargs)
+        if post_norm:
+            z = normalize(z)
+        z = affine(z, up_project_weights, use_bias=use_bias)
+        return x + z
+    return layer_with_residual
 
 def normalize(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
     """
@@ -155,6 +184,7 @@ def affine(flat: FlatMultiTensor, weight: Union[torch.Tensor, MultiTensor, list,
         channel_dim=flat.channel_dim,
     )
 
+@partial(add_residual, post_norm=True)
 def share_up(flat: FlatMultiTensor) -> FlatMultiTensor:
     """Vectorized *share_up* operation implemented via a cached CSR SpMM.
 
@@ -179,4 +209,3 @@ def share_up(flat: FlatMultiTensor) -> FlatMultiTensor:
         dims_list=flat.dims_list,
         channel_dim=flat.channel_dim,
     )
-
