@@ -1,10 +1,49 @@
 import preprocessing
-from multitensor_systems import multify
+from multitensor_systems import multify, MultiTensor
 from multitensor_systems_vec import flat_multitensor, unpack_flat
 import torch
 import layers_vec
 import layers
 import time
+
+def make_affine_weights(channel_dim: int = 16,
+                        split: str = "training",
+                        task_index: int = 0,
+                        device: str = "cuda") -> MultiTensor:
+    """
+    Build a `MultiTensor` whose 18 leaves each contain a (W, b) pair with
+    shapes (channel_dim, channel_dim) and (channel_dim,).
+
+    Nothing else needs to be constructed by the caller.
+
+    Parameters
+    ----------
+    channel_dim : int          Width of each weight matrix / bias vector.
+    split       : str          Which ARC split to load via `preprocessing`.
+    task_index  : int          Which task number within the split to use just
+                               for its `MultiTensorSystem`.
+    device      : str          CUDA / CPU device string.
+
+    Returns
+    -------
+    MultiTensor
+        Per-slice weights ready to pass as the `weight` argument to
+        `layers.affine` and `layers_vec.affine`.
+    """
+    # Obtain a task object solely for its multitensor_system metadata
+    task_nums = [task_index]
+    task = preprocessing.preprocess_tasks(split, task_nums)[0]
+    mts = task.multitensor_system          # <-- we need only this
+
+    # Create an empty multitensor to hold the (W, b) pairs
+    weights_mt = mts.make_multitensor()
+
+    for dims in mts:                       # iterates over the 18 valid slices
+        W = torch.randn(channel_dim, channel_dim, device=device) / channel_dim**0.5
+        b = torch.randn(channel_dim,               device=device)
+        weights_mt[dims] = (W, b)
+
+    return weights_mt
 
 def create_mts(channel_dim=16, n_tasks=5):
     """
@@ -115,5 +154,10 @@ def test_meta(fn, fn_vec, **kwargs):
 
 
 # test_meta(layers.normalize, layers_vec.normalize)
+
+# test single weight
 # test_meta(layers.affine, layers_vec.affine, weight=(torch.randn(16, 16, device='cuda'),torch.randn(16, device='cuda')))
-test_meta(layers.share_up, layers_vec.share_up)
+
+# test multitensor weight
+test_meta(layers.affine, layers_vec.affine, weight=make_affine_weights(channel_dim=16))
+# test_meta(layers.share_up, layers_vec.share_up)

@@ -1,10 +1,11 @@
 import torch
 import torch.nn.functional as F
 from torch_scatter import segment_csr, scatter_mean
-from typing import Optional
+from typing import Optional, Union
 import numpy as np
 
 from multitensor_systems_vec import FlatMultiTensor
+from multitensor_systems import MultiTensor
 
 """
 Vectorized implementations of layers that operate on FlatMultiTensor.
@@ -73,20 +74,80 @@ def normalize(flat: FlatMultiTensor, debias: bool = True) -> FlatMultiTensor:
         channel_dim=flat.channel_dim,
     )
 
-def affine(flat: FlatMultiTensor, weight, use_bias=False) -> FlatMultiTensor:
+def affine(flat: FlatMultiTensor, weight: Union[torch.Tensor, MultiTensor, list, tuple], use_bias: bool = False) -> FlatMultiTensor:
     """
-    Apply a linear layer to a tensor, along the channel dimension.
-    Args:
-        x (Tensor): Input to the linear layer.
-        weight (list[Tensor]): A weight matrix and a bias vector.
-    Returns:
-        Tensor: Output of the linear layer.
+    Affine transformation for a *FlatMultiTensor*.
+
+    Two usage modes are supported.
+    1. Shared weight  (``weight`` is a ``Tensor`` **or** a two–element ``(W, b)`` list/tuple):
+       Every slice is multiplied by the same matrix ``W`` (and optional bias ``b``).
+    2. Per-slice weight (``weight`` is a ``MultiTensor`` whose leaves hold ``(W, b)`` pairs):
+       Each slice *i* picks its own ``W_i`` (and optional ``b_i``) and we loop over the
+       *k* slices.  Only *k* GEMM calls are issued; memory footprint stays
+       O(total_len · d).
+
+    Args
+    -----
+    flat   : FlatMultiTensor
+        Input buffer of shape (total_len, d).
+    weight : Union[Tensor, MultiTensor, Sequence[Tensor]]
+        See modes above.
+    use_bias : bool, default False
+        Whether to add the bias vector(s) after the matrix multiplication.
     """
-    x = torch.matmul(flat.data, weight[0])
-    if use_bias:
-        x = x + weight[1]
+
+    # ------------------------------------------------------------------
+    # Fast path – one global weight for all slices.
+    # ------------------------------------------------------------------
+    if not isinstance(weight, MultiTensor):
+        # Accept both (W, b) container or bare W tensor.
+        if isinstance(weight, (list, tuple)):
+            W = weight[0]
+            b = weight[1] if use_bias and len(weight) > 1 else None
+        else:
+            W = weight
+            b = None
+
+        out_data = torch.matmul(flat.data, W)
+        if use_bias and b is not None:
+            out_data = out_data + b  # broadcast add
+
+        return FlatMultiTensor(
+            data=out_data,
+            offsets=flat.offsets,
+            lengths=flat.lengths,
+            shapes=flat.shapes,
+            dims_list=flat.dims_list,
+            channel_dim=flat.channel_dim,
+        )
+
+    # ------------------------------------------------------------------
+    # Per-slice weights – loop over *k* slices (k = 18 here).
+    # ------------------------------------------------------------------
+    out_data = torch.empty_like(flat.data)
+
+    for idx, dims in enumerate(flat.dims_list):
+        # Retrieve the (W, b) pair (or bare W) for this slice.
+        wb = weight[dims]
+        if isinstance(wb, (list, tuple)):
+            W_i = wb[0]
+            b_i = wb[1] if use_bias and len(wb) > 1 else None
+        else:
+            W_i = wb
+            b_i = None
+
+        offset = int(flat.offsets[idx].item())
+        length = int(flat.lengths[idx].item())
+
+        slice_in = flat.data.narrow(0, offset, length)
+        slice_out = torch.matmul(slice_in, W_i)
+        if use_bias and b_i is not None:
+            slice_out = slice_out + b_i
+
+        out_data.narrow(0, offset, length).copy_(slice_out)
+
     return FlatMultiTensor(
-        data=x,
+        data=out_data,
         offsets=flat.offsets,
         lengths=flat.lengths,
         shapes=flat.shapes,
