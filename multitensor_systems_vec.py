@@ -22,7 +22,6 @@ class FlatMultiTensor:
         shapes: List[List[int]],           # list of full spatial shapes (len = n_slices)
         dims_list: List[Tuple[int, ...]],  # list of the 5-bit masks that identify each slice
         channel_dim: int,
-        row2slice: torch.Tensor,           # (total_positions,) mapping each row to its slice index
     ):
         self.data = data
         self.offsets = offsets
@@ -30,7 +29,8 @@ class FlatMultiTensor:
         self.shapes = shapes
         self.dims_list = dims_list
         self.channel_dim = channel_dim
-        self.row2slice = row2slice
+        # Pre-compute CSR indptr for segment_csr operations
+        self.indptr = torch.cat([lengths.new_zeros(1), torch.cumsum(lengths, dim=0)])
         self.build_share_up_metadata()
 
     # ------------------------------------------------------------------
@@ -272,11 +272,6 @@ def flat_multitensor(mt, debug=False) -> FlatMultiTensor:
     data = torch.cat(tensor_list, dim=0)
     if debug:
         data = data.detach().requires_grad_(True)
-    # Pre-compute row2slice mapping for efficient scatter operations
-    row2slice = torch.repeat_interleave(
-        torch.arange(len(dims_list), device=data.device, dtype=torch.long),
-        torch.tensor(lengths, device=data.device, dtype=torch.long)
-    )
 
     return FlatMultiTensor(
         data=data,
@@ -285,7 +280,6 @@ def flat_multitensor(mt, debug=False) -> FlatMultiTensor:
         shapes=shapes,
         dims_list=dims_list,
         channel_dim=channel_dim,
-        row2slice=row2slice,
     )
 
 
