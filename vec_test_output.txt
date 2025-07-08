@@ -1,0 +1,40 @@
+
+===== Testing normalize =====
+Time taken to create multitensors: 0.0962s
+Testing with 5 multitensors
+✓ Forward and backward pass correctness tests passed
+Benchmarking performance with 10 runs...
+Regular implementation: 0.1531s
+Vectorized implementation: 0.1332s
+Speedup: 1.15x
+==================================================
+
+===== Testing affine =====
+Time taken to create multitensors: 0.0050s
+Testing with 5 multitensors
+✓ Forward and backward pass correctness tests passed
+Benchmarking performance with 10 runs...
+Regular implementation: 0.0816s
+Vectorized implementation: 0.0410s
+Speedup: 1.99x
+==================================================
+
+===== Testing affine =====
+Time taken to create multitensors: 0.0048s
+Testing with 5 multitensors
+✓ Forward and backward pass correctness tests passed
+Benchmarking performance with 10 runs...
+Regular implementation: 0.0811s
+Vectorized implementation: 0.1018s
+Speedup: 0.80x
+==================================================
+
+===== Testing layer_with_residual =====
+Time taken to create multitensors: 0.0056s
+Testing with 5 multitensors
+✓ Forward and backward pass correctness tests passed
+Benchmarking performance with 10 runs...
+Regular implementation: 0.3154s
+Vectorized implementation: 0.4107s
+Speedup: 0.77x
+==================================================

@@ -162,12 +162,12 @@ def test_meta(fn, fn_vec, *args,**kwargs):
     print("=" * 50)
 
 
-# test_meta(layers.normalize, layers_vec.normalize)
+test_meta(layers.normalize, layers_vec.normalize)
 
 # test single weight
-# test_meta(layers.affine, layers_vec.affine, weight=(torch.randn(16, 16, device='cuda'),torch.randn(16, device='cuda')))
+test_meta(layers.affine, layers_vec.affine, weight=(torch.randn(16, 16, device='cuda'),torch.randn(16, device='cuda')))
 
 # test multitensor weight
-# test_meta(layers.affine, layers_vec.affine, weight=make_affine_weights(channel_dim=16))
+test_meta(layers.affine, layers_vec.affine, weight=make_affine_weights(channel_dim=16))
 
 test_meta(layers.share_up, layers_vec.share_up, make_affine_weights(channel_dim=16, up_down_weights=True)) 
