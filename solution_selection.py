@@ -161,6 +161,57 @@ class Logger:
         solution_slices = tuple(tuple(tuple(row) for row in example) for example in solution_slices)
         return solution_slices, np.mean(uncertainty_values)
 
+    def get_solutions_as_int_tuples(self):
+        """Convert the best two solutions to numpy arrays of integers."""
+        def solution_to_int_arrays(solution):
+            if solution is None:
+                return None
+            
+            # Convert solution tuples to numpy arrays first
+            solution_arrays = [np.array(example) for example in solution]
+            
+            # Create color mapping from color values to indices
+            color_to_idx = {color: idx for idx, color in enumerate(self.task.colors)}
+            
+            # Convert color values to indices for each test example
+            int_solutions = []
+            for example_array in solution_arrays:
+                # Use vectorize to map colors to indices directly
+                vectorized_map = np.vectorize(lambda x: color_to_idx[x])
+                int_array = vectorized_map(example_array).astype(int)
+                int_solutions.append(int_array)
+            
+            return int_solutions
+        
+        return (
+            solution_to_int_arrays(self.solution_most_frequent),
+            solution_to_int_arrays(self.solution_second_most_frequent)
+        )
+
+    def save_final_state(self):
+        """Save the final state data for this task."""
+        # Get the latest values from the curves
+        total_loss = self.loss_curve[-1] if self.loss_curve else 0.0
+        reconstruction_loss = self.reconstruction_error_curve[-1] if self.reconstruction_error_curve else 0.0
+        total_kl_loss = self.total_KL_curve[-1] if self.total_KL_curve else 0.0
+        
+        # Get individual KL losses
+        individual_kl_losses = {}
+        for kl_name, kl_curve in self.KL_curves.items():
+            individual_kl_losses[kl_name] = kl_curve[-1] if kl_curve else 0.0
+        
+        # Get best two solutions as integer tuples
+        best_solutions = self.get_solutions_as_int_tuples()
+        
+        return {
+            'total_loss': total_loss,
+            'reconstruction_loss': reconstruction_loss,
+            'total_kl_loss': total_kl_loss,
+            'individual_kl_losses': individual_kl_losses,
+            'best_solution': best_solutions[0],
+            'second_best_solution': best_solutions[1]
+        }
+
 
 def save_predictions(loggers, fname='predictions.npz'):
     """Saves solution score contributions and history of chosen solutions."""
@@ -188,3 +239,44 @@ def plot_accuracy(true_solution_hashes, fname='predictions.npz'):
     plt.plot(np.arange(n_iterations), accuracy_curve, 'k-')
     plt.savefig('accuracy_curve.pdf', bbox_inches='tight')
     plt.close()
+
+
+def save_final_states(loggers, fname='final_states.npz'):
+    """Save final iteration data for all tasks."""
+    final_states = []
+    for logger in loggers:
+        final_states.append(logger.save_final_state())
+    
+    # Prepare data for saving
+    total_losses = [state['total_loss'] for state in final_states]
+    reconstruction_losses = [state['reconstruction_loss'] for state in final_states]
+    total_kl_losses = [state['total_kl_loss'] for state in final_states]
+    
+    # Collect all unique KL component names
+    all_kl_names = set()
+    for state in final_states:
+        all_kl_names.update(state['individual_kl_losses'].keys())
+    all_kl_names = sorted(list(all_kl_names))
+    
+    # Create arrays for individual KL losses
+    individual_kl_arrays = {}
+    for kl_name in all_kl_names:
+        individual_kl_arrays[f'kl_{kl_name}'] = [
+            state['individual_kl_losses'].get(kl_name, 0.0) 
+            for state in final_states
+        ]
+    
+    best_solutions = [state['best_solution'] for state in final_states]
+    second_best_solutions = [state['second_best_solution'] for state in final_states]
+    
+    # Save to npz file
+    save_dict = {
+        'total_losses': np.array(total_losses),
+        'reconstruction_losses': np.array(reconstruction_losses),
+        'total_kl_losses': np.array(total_kl_losses),
+        'best_solutions': best_solutions,  # Keep as list of lists of arrays
+        'second_best_solutions': second_best_solutions,  # Keep as list of lists of arrays
+        **individual_kl_arrays
+    }
+    
+    np.savez(fname, **save_dict)

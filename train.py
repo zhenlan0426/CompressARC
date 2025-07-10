@@ -159,6 +159,9 @@ if __name__ == "__main__":
         solution_selection.save_predictions(train_history_loggers[:i+1])
         solution_selection.plot_accuracy(true_solution_hashes)
 
+    # Save final states for all tasks
+    solution_selection.save_final_states(train_history_loggers, 'final_states.npz')
+
     # Write down how long it all took
     with open('timing_result.txt', 'w') as f:
         f.write("Time elapsed in seconds: " + str(time.time() - start_time))

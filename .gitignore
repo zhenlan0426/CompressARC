@@ -1,4 +1,12 @@
-dataset/
-*.pyc
-*.toml
-*.csv
+# Ignore everything
+*
+
+# Un-ignore files with these extensions
+!*.py
+!*.md
+
+# Un-ignore all directories so we can track files in them
+!*/
+
+# Don't ignore the .gitignore file itself
+!.gitignore
