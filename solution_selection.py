@@ -18,6 +18,7 @@ class Logger:
         self.total_KL_curve = []
         self.reconstruction_error_curve = []
         self.loss_curve = []
+        self.test_reconstruction_error_curve = []
 
         n_test, n_colors, n_x, n_y = task.n_test, task.n_colors, task.n_x, task.n_y
         shape = (n_test, n_colors + 1, n_x, n_y)
@@ -37,7 +38,7 @@ class Logger:
         self.solution_contributions_log = []
         self.solution_picks_history = []
 
-    def log(self, train_step, logits, x_mask, y_mask, KL_amounts, KL_names, total_KL, reconstruction_error, loss):
+    def log(self, train_step, logits, x_mask, y_mask, KL_amounts, KL_names, total_KL, reconstruction_error, loss, test_reconstruction_error=None):
         """Logs training progress and tracks solutions from one forward pass."""
         if train_step == 0:
             self.KL_curves = {KL_name: [] for KL_name in KL_names}
@@ -48,6 +49,8 @@ class Logger:
         self.total_KL_curve.append(float(total_KL.detach().cpu().numpy()))
         self.reconstruction_error_curve.append(float(reconstruction_error.detach().cpu().numpy()))
         self.loss_curve.append(float(loss.detach().cpu().numpy()))
+        if test_reconstruction_error is not None:
+            self.test_reconstruction_error_curve.append(float(test_reconstruction_error.detach().cpu().numpy()))
 
         self._track_solution(train_step, logits.detach(), x_mask.detach(), y_mask.detach())
 
@@ -161,55 +164,61 @@ class Logger:
         solution_slices = tuple(tuple(tuple(row) for row in example) for example in solution_slices)
         return solution_slices, np.mean(uncertainty_values)
 
-    def get_solutions_as_int_tuples(self):
-        """Convert the best two solutions to numpy arrays of integers."""
-        def solution_to_int_arrays(solution):
-            if solution is None:
-                return None
-            
-            # Convert solution tuples to numpy arrays first
-            solution_arrays = [np.array(example) for example in solution]
-            
-            # Create color mapping from color values to indices
-            color_to_idx = {color: idx for idx, color in enumerate(self.task.colors)}
-            
-            # Convert color values to indices for each test example
-            int_solutions = []
-            for example_array in solution_arrays:
-                # Use vectorize to map colors to indices directly
-                vectorized_map = np.vectorize(lambda x: color_to_idx[x])
-                int_array = vectorized_map(example_array).astype(int)
-                int_solutions.append(int_array)
-            
-            return int_solutions
-        
-        return (
-            solution_to_int_arrays(self.solution_most_frequent),
-            solution_to_int_arrays(self.solution_second_most_frequent)
-        )
+    def compute_stats(self, true_hash):
+        import numpy as np
 
-    def save_final_state(self):
-        """Save the final state data for this task."""
-        # Get the latest values from the curves
-        total_loss = self.loss_curve[-1] if self.loss_curve else 0.0
-        reconstruction_loss = self.reconstruction_error_curve[-1] if self.reconstruction_error_curve else 0.0
-        total_kl_loss = self.total_KL_curve[-1] if self.total_KL_curve else 0.0
-        
-        # Get individual KL losses
-        individual_kl_losses = {}
-        for kl_name, kl_curve in self.KL_curves.items():
-            individual_kl_losses[kl_name] = kl_curve[-1] if kl_curve else 0.0
-        
-        # Get best two solutions as integer tuples
-        best_solutions = self.get_solutions_as_int_tuples()
-        
+        avg_total_loss = np.mean([r + k for r, k in zip(self.reconstruction_error_curve, self.total_KL_curve)])
+
+        last_total_loss = self.reconstruction_error_curve[-1] + self.total_KL_curve[-1]
+
+        last_test_recon = self.test_reconstruction_error_curve[-1]
+
+        is_shape_fixed = self.task.in_out_same_size or self.task.all_out_same_size
+
+        def has_right_shape(solution):
+            if solution is None:
+                return False
+            for ex in range(self.task.n_test):
+                pred_grid = solution[ex]
+                true_shape = self.task.true_test_shapes[ex]
+                if len(pred_grid) != true_shape[0] or (len(pred_grid) > 0 and len(pred_grid[0]) != true_shape[1]):
+                    return False
+            return True
+
+        top1_right_shape = has_right_shape(self.solution_most_frequent)
+        top2_right_shape = has_right_shape(self.solution_second_most_frequent)
+
+        def compute_match_pct(solution, right_shape):
+            if not right_shape:
+                return 0.0
+            total_matches = 0
+            total_cells = 0
+            for ex in range(self.task.n_test):
+                pred_grid = solution[ex]
+                true_shape = self.task.true_test_shapes[ex]
+                h, w = true_shape
+                pred_array = np.array(pred_grid)
+                # Get ground truth indices and convert to actual colors
+                true_indices = self.task.solution[ex, :h, :w].cpu().numpy()
+                true_colors = np.array(self.task.colors)[true_indices]
+                # Both pred_array and true_colors now contain actual color values
+                matches = np.sum(true_colors == pred_array)
+                total_matches += matches
+                total_cells += h * w
+            return (total_matches / total_cells * 100) if total_cells > 0 else 0.0
+
+        top1_match_pct = compute_match_pct(self.solution_most_frequent, top1_right_shape)
+        top2_match_pct = compute_match_pct(self.solution_second_most_frequent, top2_right_shape)
+
         return {
-            'total_loss': total_loss,
-            'reconstruction_loss': reconstruction_loss,
-            'total_kl_loss': total_kl_loss,
-            'individual_kl_losses': individual_kl_losses,
-            'best_solution': best_solutions[0],
-            'second_best_solution': best_solutions[1]
+            'avg_total_loss': float(avg_total_loss),
+            'last_total_loss': float(last_total_loss),
+            'last_test_recon': float(last_test_recon),
+            'is_shape_fixed': is_shape_fixed,
+            'top1_right_shape': top1_right_shape,
+            'top2_right_shape': top2_right_shape,
+            'top1_match_pct': top1_match_pct,
+            'top2_match_pct': top2_match_pct,
         }
 
 
@@ -240,43 +249,3 @@ def plot_accuracy(true_solution_hashes, fname='predictions.npz'):
     plt.savefig('accuracy_curve.pdf', bbox_inches='tight')
     plt.close()
 
-
-def save_final_states(loggers, fname='final_states.npz'):
-    """Save final iteration data for all tasks."""
-    final_states = []
-    for logger in loggers:
-        final_states.append(logger.save_final_state())
-    
-    # Prepare data for saving
-    total_losses = [state['total_loss'] for state in final_states]
-    reconstruction_losses = [state['reconstruction_loss'] for state in final_states]
-    total_kl_losses = [state['total_kl_loss'] for state in final_states]
-    
-    # Collect all unique KL component names
-    all_kl_names = set()
-    for state in final_states:
-        all_kl_names.update(state['individual_kl_losses'].keys())
-    all_kl_names = sorted(list(all_kl_names))
-    
-    # Create arrays for individual KL losses
-    individual_kl_arrays = {}
-    for kl_name in all_kl_names:
-        individual_kl_arrays[f'kl_{kl_name}'] = [
-            state['individual_kl_losses'].get(kl_name, 0.0) 
-            for state in final_states
-        ]
-    
-    best_solutions = [state['best_solution'] for state in final_states]
-    second_best_solutions = [state['second_best_solution'] for state in final_states]
-    
-    # Save to npz file
-    save_dict = {
-        'total_losses': np.array(total_losses),
-        'reconstruction_losses': np.array(reconstruction_losses),
-        'total_kl_losses': np.array(total_kl_losses),
-        'best_solutions': best_solutions,  # Keep as list of lists of arrays
-        'second_best_solutions': second_best_solutions,  # Keep as list of lists of arrays
-        **individual_kl_arrays
-    }
-    
-    np.savez(fname, **save_dict)

@@ -28,6 +28,7 @@ class Task:
         self.solution = self._create_solution_tensor(solution) if solution else None
         if solution is None:
             self.solution_hash = None
+            self.true_test_shapes = None
 
     def _collect_problem_shapes(self, problem):
         """
@@ -128,8 +129,10 @@ class Task:
         """
         solution_tensor = np.zeros((self.n_test, self.n_colors + 1, self.n_x, self.n_y))
         solution_tuple = ()
+        self.true_test_shapes = []
 
         for example_num, grid in enumerate(solution):
+            self.true_test_shapes.append([len(grid), len(grid[0]) if grid else 0])
             solution_tuple += (tuple(map(tuple, grid)),)
             grid_tensor = self._create_grid_tensor(grid)
             # unfortunately sometimes the solution tensor will be bigger than (n_x, n_y), and in these cases

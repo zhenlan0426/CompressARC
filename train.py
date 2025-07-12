@@ -34,7 +34,7 @@ def mask_select_logprobs(mask, length):
     log_partition = torch.logsumexp(logprobs, dim=0)
     return log_partition, logprobs
 
-def take_step(task, model, optimizer, train_step, train_history_logger):
+def take_step(task, model, optimizer, train_step, train_history_logger, track_last=False):
     """
     Runs a forward pass of the model on the ARC-AGI task.
     Args:
@@ -57,10 +57,12 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
 
     # Compute the reconstruction error
     reconstruction_error = 0
+    test_reconstruction_error = 0
     for example_num in range(task.n_examples):  # sum over examples
         for in_out_mode in range(2):  # sum over in/out grid per example
             if example_num >= task.n_train and in_out_mode == 1:
-                continue
+                if not track_last:
+                    continue
 
             # Determine whether the grid size is already known.
             # If not, there is an extra term in the reconstruction error, corresponding to
@@ -108,7 +110,10 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
             else:
                 coefficient = 1
             logprob = torch.logsumexp(coefficient*logprobs, dim=(0,1))/coefficient  # Aggregate for all possible grid sizes
-            reconstruction_error = reconstruction_error - logprob
+            if example_num >= task.n_train and in_out_mode == 1:
+                test_reconstruction_error = test_reconstruction_error - logprob
+            else:
+                reconstruction_error = reconstruction_error - logprob
 
     loss = total_KL + 10*reconstruction_error
     loss.backward()
@@ -124,13 +129,14 @@ def take_step(task, model, optimizer, train_step, train_history_logger):
                              KL_names,
                              total_KL,
                              reconstruction_error,
-                             loss)
+                             loss,
+                             test_reconstruction_error if track_last else None)
 
 
 if __name__ == "__main__":
     start_time = time.time()
 
-    task_nums = list(range(400))
+    task_nums = [0,1,2]
     split = "training"  # "training", "evaluation, or "test"
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
@@ -144,8 +150,10 @@ if __name__ == "__main__":
         optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
         optimizers.append(optimizer)
         train_history_logger = solution_selection.Logger(task)
-        visualization.plot_problem(train_history_logger)
+        # visualization.plot_problem(train_history_logger)
         train_history_loggers.append(train_history_logger)
+
+    task_stats = []
 
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
@@ -153,15 +161,36 @@ if __name__ == "__main__":
     # Train the models one by one
     for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
         n_iterations = 2000
+
+        task_start_time = time.time()
+
         for train_step in range(n_iterations):
-            take_step(task, model, optimizer, train_step, train_history_logger)
-        visualization.plot_solution(train_history_logger)
-        solution_selection.save_predictions(train_history_loggers[:i+1])
-        solution_selection.plot_accuracy(true_solution_hashes)
+            track_last = (train_step == n_iterations - 1)
+            take_step(task, model, optimizer, train_step, train_history_logger, track_last=track_last)
+
+        time_spent = time.time() - task_start_time
+
+        # visualization.plot_solution(train_history_logger)
+
+        stats = train_history_logger.compute_stats(true_solution_hashes[i])
+        stats['task_num'] = task_nums[i]
+        stats['time_spent'] = time_spent
+        task_stats.append(stats)
+
+        # solution_selection.save_predictions(train_history_loggers[:i+1])
+        # solution_selection.plot_accuracy(true_solution_hashes)
 
     # Save final states for all tasks
-    solution_selection.save_final_states(train_history_loggers, 'final_states.npz')
+    # solution_selection.save_final_states(train_history_loggers, 'final_states.npz')
 
-    # Write down how long it all took
-    with open('timing_result.txt', 'w') as f:
-        f.write("Time elapsed in seconds: " + str(time.time() - start_time))
+    # Save task stats
+    import csv
+    keys = task_stats[0].keys()
+    with open('task_stats.csv', 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(task_stats)
+
+    # # Write down how long it all took
+    # with open('timing_result.txt', 'w') as f:
+    #     f.write("Time elapsed in seconds: " + str(time.time() - start_time))

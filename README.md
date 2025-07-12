@@ -6,7 +6,8 @@ model is trained by jointly optimizing the latent code z and the decoder f, wher
 
 there are certain cases where we know the grid size, e.g. input and output always have the same size. in this case, we can use the mask (example, x, y) to better inform the model, e.g. in share_down and cummax functions in layers.py, we would only aggregate over the valid patches. and in the objective function, we would only sum over different offsets but not over different lengths. Other cases are such grid size is unknown and needs to be inferred by the model.
 
-I am thinking of an alternative that we combine the two cases above. latent variable z should conceptually contain information about the grid size, which lives in the tensor of shape (example, x, y, channel).
+I am thinking of an alternative that we combine the two cases above. latent variable z should conceptually contain information about the grid size, which lives in the tensor of shape (example, x, y, channel). we can have soft mask as sigmoid of this tensor.mean(-1) and multiply all multi-tensor that are compatible with the mask. Compatible means multi-tensor that has at least example, x or example, y. This mask multiplication layer can happen before any layers and once every block of layers.
+
 
 
 

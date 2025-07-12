@@ -5,8 +5,13 @@
 !*.py
 !*.md
 
-# Un-ignore all directories so we can track files in them
-!*/
-
 # Don't ignore the .gitignore file itself
 !.gitignore
+
+# Ignore directories
+__pycache__/
+.cursor/
+.pytest_cache/
+dataset/
+plots/
+results_for_the_blog_post/
