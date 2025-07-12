@@ -164,7 +164,7 @@ class Logger:
         solution_slices = tuple(tuple(tuple(row) for row in example) for example in solution_slices)
         return solution_slices, np.mean(uncertainty_values)
 
-    def compute_stats(self, true_hash):
+    def compute_stats(self):
         import numpy as np
 
         avg_total_loss = np.mean([r + k for r, k in zip(self.reconstruction_error_curve, self.total_KL_curve)])

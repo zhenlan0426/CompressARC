@@ -136,7 +136,7 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
 if __name__ == "__main__":
     start_time = time.time()
 
-    task_nums = [0,1,2]
+    task_nums = list(range(1000))
     split = "training"  # "training", "evaluation, or "test"
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
@@ -172,7 +172,7 @@ if __name__ == "__main__":
 
         # visualization.plot_solution(train_history_logger)
 
-        stats = train_history_logger.compute_stats(true_solution_hashes[i])
+        stats = train_history_logger.compute_stats()
         stats['task_num'] = task_nums[i]
         stats['time_spent'] = time_spent
         task_stats.append(stats)
