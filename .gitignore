@@ -4,6 +4,7 @@
 # Un-ignore files with these extensions
 !*.py
 !*.md
+!*.sh
 
 # Don't ignore the .gitignore file itself
 !.gitignore

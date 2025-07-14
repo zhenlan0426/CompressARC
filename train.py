@@ -2,6 +2,8 @@ import time
 
 import numpy as np
 import torch
+import multiprocessing
+import torch.multiprocessing as mp
 
 import preprocessing
 import arc_compressor
@@ -133,6 +135,33 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
                              test_reconstruction_error if track_last else None)
 
 
+def train_single_task(task):
+    torch.set_default_device('cuda')
+    model = arc_compressor.ARCCompressor(task)
+    optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
+    train_history_logger = solution_selection.Logger(task)
+    # visualization.plot_problem(train_history_logger)
+
+    n_iterations = 500
+
+    task_start_time = time.time()
+
+    for train_step in range(n_iterations):
+        track_last = (train_step == n_iterations - 1)
+        take_step(task, model, optimizer, train_step, train_history_logger, track_last=track_last)
+
+    time_spent = time.time() - task_start_time
+
+    # visualization.plot_solution(train_history_logger)
+
+    stats = train_history_logger.compute_stats()
+    stats['task_id'] = task.task_name
+    stats['time_spent'] = time_spent
+    del model, optimizer, train_history_logger
+    torch.cuda.empty_cache()
+    return stats
+
+
 if __name__ == "__main__":
     start_time = time.time()
 
@@ -141,56 +170,37 @@ if __name__ == "__main__":
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
     tasks = preprocessing.preprocess_tasks(split, task_nums)
-    models = []
-    optimizers = []
-    train_history_loggers = []
-    for task in tasks:
-        model = arc_compressor.ARCCompressor(task)
-        models.append(model)
-        optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
-        optimizers.append(optimizer)
-        train_history_logger = solution_selection.Logger(task)
-        # visualization.plot_problem(train_history_logger)
-        train_history_loggers.append(train_history_logger)
-
-    task_stats = []
 
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
 
-    # Train the models one by one
-    for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
-        n_iterations = 2000
+    mp.set_start_method('spawn')
+    num_processes = 8  # Adjust based on your GPU memory; each task uses ~1GB, GPU has 24GB
+    task_stats = []
+    with mp.Pool(processes=num_processes) as pool:
+        args_list = [(tasks[i],) for i in range(len(tasks))]
+        task_stats = pool.starmap(train_single_task, args_list)
 
-        task_start_time = time.time()
-
-        for train_step in range(n_iterations):
-            track_last = (train_step == n_iterations - 1)
-            take_step(task, model, optimizer, train_step, train_history_logger, track_last=track_last)
-
-        time_spent = time.time() - task_start_time
-
-        # visualization.plot_solution(train_history_logger)
-
-        stats = train_history_logger.compute_stats()
-        stats['task_num'] = task_nums[i]
-        stats['time_spent'] = time_spent
-        task_stats.append(stats)
-
-        # solution_selection.save_predictions(train_history_loggers[:i+1])
-        # solution_selection.plot_accuracy(true_solution_hashes)
+    # solution_selection.save_predictions(train_history_loggers[:i+1])
+    # solution_selection.plot_accuracy(true_solution_hashes)
 
     # Save final states for all tasks
     # solution_selection.save_final_states(train_history_loggers, 'final_states.npz')
 
+    import os
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    dir_path = f"run_results/{timestamp}"
+    os.makedirs(dir_path, exist_ok=True)
+
     # Save task stats
     import csv
     keys = task_stats[0].keys()
-    with open('task_stats.csv', 'w', newline='') as f:
+    with open(f'{dir_path}/task_stats.csv', 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=keys)
         writer.writeheader()
         writer.writerows(task_stats)
 
-    # # Write down how long it all took
-    # with open('timing_result.txt', 'w') as f:
-    #     f.write("Time elapsed in seconds: " + str(time.time() - start_time))
+    # Write down how long it all took
+    with open(f'{dir_path}/timing_result.txt', 'w') as f:
+        f.write("Time elapsed in seconds: " + str(time.time() - start_time))
