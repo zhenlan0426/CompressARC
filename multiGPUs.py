@@ -18,7 +18,7 @@ spec = importlib.util.spec_from_file_location(module_name, module_path)
 preprocessing = importlib.util.module_from_spec(spec)
 sys.modules[module_name] = preprocessing
 spec.loader.exec_module(preprocessing)
-import train
+import multi_train
 import arc_compressor
 import initializers
 import multitensor_systems

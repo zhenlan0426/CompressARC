@@ -12,7 +12,7 @@ import numpy as np
 import torch
 
 import preprocessing
-import train
+import multi_train
 import arc_compressor
 import initializers
 import multitensor_systems
@@ -62,7 +62,7 @@ def solve_task(task_name, split, time_limit, n_train_iterations, gpu_id, memory_
 
         # Training loop
         for train_step in range(n_train_iterations):
-            train.take_step(task, model, optimizer, train_step, train_history_logger)
+            multi_train.take_step(task, model, optimizer, train_step, train_history_logger)
             if time.time() > time_limit:
                 break
 

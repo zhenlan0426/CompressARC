@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-import train
+import multi_train
 import preprocessing
 import arc_compressor
 import initializers
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     # Perform training for 1500 iterations
     n_iterations = 1500
     for train_step in tqdm(range(n_iterations)):
-        train.take_step(task, model, optimizer, train_step, train_history_logger)
+        multi_train.take_step(task, model, optimizer, train_step, train_history_logger)
         
         # Plot solutions every 50 steps
         if (train_step+1) % 50 == 0:

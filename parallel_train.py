@@ -21,7 +21,7 @@ import numpy as np
 import torch
 
 import preprocessing
-import train
+import multi_train
 import arc_compressor
 import initializers
 import multitensor_systems
