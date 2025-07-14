@@ -137,7 +137,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     task_nums = [0,1,2]
-    split = "evaluation"  # "training", "evaluation, or "test"
+    split = "training"  # "training", "evaluation, or "test"
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
     tasks = preprocessing.preprocess_tasks(split, task_nums)
@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
     # Train the models one by one
     for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
-        n_iterations = 500
+        n_iterations = 2000
 
         task_start_time = time.time()
 
@@ -172,7 +172,7 @@ if __name__ == "__main__":
 
         # visualization.plot_solution(train_history_logger)
 
-        stats = train_history_logger.compute_stats(true_solution_hashes[i])
+        stats = train_history_logger.compute_stats()
         stats['task_num'] = task.task_name
         stats['time_spent'] = time_spent
         task_stats.append(stats)
