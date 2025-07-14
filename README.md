@@ -8,7 +8,9 @@ there are certain cases where we know the grid size, e.g. input and output alway
 
 I am thinking of an alternative that we combine the two cases above. latent variable z should conceptually contain information about the grid size, which lives in the tensor of shape (example, x, y, channel). we can have soft mask as sigmoid of this tensor.mean(-1) and multiply all multi-tensor that are compatible with the mask. Compatible means multi-tensor that has at least example, x or example, y. This mask multiplication layer can happen before any layers and once every block of layers.
 
-
+- **Amortization** is tricky with multi-processing and shared f. work on **Batched** first then dont need multi-processing.
+- **mask** needs to happen after Amortization as without shared f, use perfect mask (when grid size is known) would be best. With sharing, learnt mask is better for the case where grid size is unknown. We can train with both and for unknown grid size, predict with perfect mask.
+- **Amortization** need to know which parameters have task-specific shape.
 
 
 

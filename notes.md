@@ -9,7 +9,7 @@ better to not have special treatment?
 8. mask search over both start and length. alternatively, mask search over only length, use top left corner of logits as start.
 9. as part of post-processing, instead of collecting all solutions throughout training, collect solution based on last model weights and z without sample.
 10. add "batch" as in multiple starting points.
-   - share f or separate f for each batch?
+   - share f or separate f for each batch - pre-train with shared f, then finetune with batched f?
    - first run batch and select top k, then run more iterations on top k, discarding the rest?
 
 does not work:
