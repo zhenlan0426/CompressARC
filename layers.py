@@ -46,6 +46,13 @@ def affine(dims, x, weight, use_bias=False):
         x = x + weight[1]
     return x
 
+# layer is a leaf function, i.e. it takes one of the multitensor and returns the same type of multitensor
+# leaf functions needs to take dims as the first argument. add_residual takes a leaf function and returns a new leaf function.
+# @multitensor_systems.multify
+# @add_residual
+# def softmax(dims, x):...
+# softmax is a leaf function -> add_residual(softmax) is a new leaf function. -> multify(add_residual(softmax)) applies
+# to all the tensors in the multitensor system.
 def add_residual(layer):
     """
     Surround a layer/operation with a residual connection, up and down projections,
