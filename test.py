@@ -46,10 +46,10 @@ except ModuleNotFoundError:
 # clone_slices: if True, each slice is clone+detached (no shared grads)
 #               if False, slices are views into shared storage (fast / memory-light)
 def split_multitensor_batch(
-    mt_batched: "mtsys.MultiTensor",
+    mt_batched: mtsys.MultiTensor,
     batch_size: int = 8,
     clone_slices: bool = True,
-) -> List["mtsys.MultiTensor"]:
+) -> List[mtsys.MultiTensor]:
     """Split the leading batch dimension into a list of *views*.
 
     Each returned MultiTensor mirrors the structure of *mt_batched* but the
@@ -70,7 +70,7 @@ def split_multitensor_batch(
             split_mt[b][dims] = leaf_slice
     return split_mt
 
-def multitensor_allclose(mt1: "mtsys.MultiTensor", mt2: "mtsys.MultiTensor", **kwargs) -> Tuple[bool, Tuple[int, ...] | None]:
+def multitensor_allclose(mt1: mtsys.MultiTensor, mt2: mtsys.MultiTensor, **kwargs) -> Tuple[bool, Tuple[int, ...] | None]:
     """Element-wise allclose across every leaf.  Returns (ok, bad_dims)."""
     system = mt1.multitensor_system
     assert mt2.multitensor_system is system, "Systems differ"
@@ -108,10 +108,10 @@ def meta_tester(
     # Build per-batch argument tuples.
     #   All batched_args are MultiTensors -> split into list
     #   Non-MultiTensor args come via kwargs (shared across batches)
-    per_batch_args: List[List] = [[] for _ in range(batch_size)]
+    per_batch_args: List[List[mtsys.MultiTensor]] = [[] for _ in range(batch_size)] # (b, args) -> (dims, )
     
     # Keep handles on all split MultiTensors for grad comparisons later
-    all_splits: List[List[mtsys.MultiTensor]] = []
+    all_splits: List[List[mtsys.MultiTensor]] = [] # (args, b) -> (dims, )
     
     for arg in batched_args:
         split_list = split_multitensor_batch(arg, batch_size=batch_size, clone_slices=True)
@@ -134,7 +134,7 @@ def meta_tester(
     # Build a gradient MultiTensor with matching leaves.
     grad_mt = out_batched.multitensor_system.make_multitensor()
     for dims in out_batched.multitensor_system:
-        grad_mt[dims] = torch.randn(batch_size, *out_batched[dims].shape)
+        grad_mt[dims] = torch.randn(*out_batched[dims].shape)
 
     # Batched backward.
     loss_batched = sum((out_batched[dims] * grad_mt[dims]).sum() for dims in out_batched.multitensor_system)
