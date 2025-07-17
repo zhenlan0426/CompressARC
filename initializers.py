@@ -5,7 +5,12 @@ import multitensor_systems
 
 np.random.seed(0)
 torch.manual_seed(0)
+import os
 
+# Check if GPU is available, use it if it is, otherwise use CPU
+if not torch.cuda.is_available():
+    print("No GPU available. Using CPU.")
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Force CPU usage only if no GPU available
 
 class Initializer:
     def __init__(self, multitensor_system, channel_dim_fn):
