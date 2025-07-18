@@ -33,12 +33,8 @@ import torch
 
 import multitensor_systems as mtsys
 import layers
-
-try:
-    import layers_batch
-except ModuleNotFoundError:
-    layers_batch = None  # continue even if batched impl not yet present
-
+import initializers_batch
+import layers_batch
 
 ################################################################################
 # Helper utilities                                                                
@@ -62,11 +58,16 @@ def split_multitensor_batch(
 
     split_mt: List[mtsys.MultiTensor] = [system.make_multitensor() for _ in range(batch_size)]
     for dims in system:
-        batched_leaf = mt_batched[dims]  # shape (B, ...)
+        batched_leaf = mt_batched[dims]  # shape (B, ...) or list of such
         for b in range(batch_size):
-            leaf_slice = batched_leaf[b]
-            if clone_slices:
-                leaf_slice = leaf_slice.detach().clone().requires_grad_(True)
+            if isinstance(batched_leaf, list):
+                leaf_slice = [t[b] for t in batched_leaf]
+                if clone_slices:
+                    leaf_slice = [s.detach().clone().requires_grad_(True) for s in leaf_slice]
+            else:
+                leaf_slice = batched_leaf[b]
+                if clone_slices:
+                    leaf_slice = leaf_slice.detach().clone().requires_grad_(True)
             split_mt[b][dims] = leaf_slice
     return split_mt
 
@@ -75,8 +76,16 @@ def multitensor_allclose(mt1: mtsys.MultiTensor, mt2: mtsys.MultiTensor, **kwarg
     system = mt1.multitensor_system
     assert mt2.multitensor_system is system, "Systems differ"
     for dims in system:
-        if not torch.allclose(mt1[dims], mt2[dims], **kwargs):
-            return False, tuple(dims)
+        leaf1 = mt1[dims]
+        leaf2 = mt2[dims]
+        if isinstance(leaf1, list):
+            assert isinstance(leaf2, list) and len(leaf1) == len(leaf2)
+            for l1, l2 in zip(leaf1, leaf2):
+                if not torch.allclose(l1, l2, **kwargs):
+                    return False, tuple(dims)
+        else:
+            if not torch.allclose(leaf1, leaf2, **kwargs):
+                return False, tuple(dims)
     return True, None
 
 ################################################################################
@@ -122,7 +131,9 @@ def meta_tester(
     # Forward pass – reference (loop) and batched.
     out_ref_list = [fn_ref(*args_b, **kwargs) for args_b in per_batch_args]
     out_batched = fn_batched(*batched_args, **kwargs)
-
+    if isinstance(out_ref_list[0], tuple):
+        out_ref_list = [o[0] for o in out_ref_list]
+        out_batched = out_batched[0]
     # Split batched output into per-slice views for comparison.
     out_batched_splits = split_multitensor_batch(out_batched, batch_size=batch_size, clone_slices=False)
 
@@ -134,77 +145,83 @@ def meta_tester(
     # Build a gradient MultiTensor with matching leaves.
     grad_mt = out_batched.multitensor_system.make_multitensor()
     for dims in out_batched.multitensor_system:
-        grad_mt[dims] = torch.randn(*out_batched[dims].shape)
+        out_leaf = out_batched[dims]
+        if isinstance(out_leaf, list):
+            grad_mt[dims] = [torch.randn(*t.shape) for t in out_leaf]
+        else:
+            grad_mt[dims] = torch.randn(*out_leaf.shape)
 
     # Batched backward.
-    loss_batched = sum((out_batched[dims] * grad_mt[dims]).sum() for dims in out_batched.multitensor_system)
+    loss_batched = 0
+    for dims in out_batched.multitensor_system:
+        out_leaf = out_batched[dims]
+        grad_leaf = grad_mt[dims]
+        if isinstance(out_leaf, list):
+            for o, g in zip(out_leaf, grad_leaf):
+                loss_batched += (o * g).sum()
+        else:
+            loss_batched += (out_leaf * grad_leaf).sum()
     loss_batched.backward()
 
     # Reference backward – loop over B and reuse corresponding slice of grad.
     for b in range(batch_size):
-        loss_ref_b = sum(
-            (out_ref_list[b][dims] * grad_mt[dims][b]).sum() for dims in out_batched.multitensor_system
-        )
+        loss_ref_b = 0
+        for dims in out_batched.multitensor_system:
+            out_leaf = out_ref_list[b][dims]
+            grad_leaf = grad_mt[dims]
+            if isinstance(grad_leaf, list):
+                assert isinstance(out_leaf, list) and len(out_leaf) == len(grad_leaf)
+                for o, g in zip(out_leaf, grad_leaf):
+                    loss_ref_b += (o * g[b]).sum()
+            else:
+                loss_ref_b += (out_leaf * grad_leaf[b]).sum()
         loss_ref_b.backward()
 
     # Compare gradients on all input MultiTensors per slice.
     for arg_idx, (arg, splits) in enumerate(zip(batched_args, all_splits)):
         for dims in arg.multitensor_system:
-            grad_batched_full = arg[dims].grad  # shape (B, ...)
-            for b in range(batch_size):
-                grad_ref_slice = splits[b][dims].grad
-                assert torch.allclose(grad_batched_full[b], grad_ref_slice, atol=atol, rtol=rtol), (
-                    f"Gradient mismatch at arg {arg_idx}, dims={dims}, batch idx {b} in {fn_ref.__name__}")
+            leaf_batched = arg[dims]
+            if isinstance(leaf_batched, list):
+                for elem_idx in range(len(leaf_batched)):
+                    grad_batched_full = leaf_batched[elem_idx].grad
+                    for b in range(batch_size):
+                        grad_ref_slice = splits[b][dims][elem_idx].grad
+                        assert torch.allclose(grad_batched_full[b], grad_ref_slice, atol=atol, rtol=rtol), (
+                            f"Gradient mismatch at arg {arg_idx}, dims={dims}, elem {elem_idx}, batch idx {b} in {fn_ref.__name__}")
+            else:
+                grad_batched_full = leaf_batched.grad
+                for b in range(batch_size):
+                    grad_ref_slice = splits[b][dims].grad
+                    assert torch.allclose(grad_batched_full[b], grad_ref_slice, atol=atol, rtol=rtol), (
+                        f"Gradient mismatch at arg {arg_idx}, dims={dims}, batch idx {b} in {fn_ref.__name__}")
 
     print(f"[OK] {fn_ref.__name__}: forward & backward match (batch={batch_size})")
 
 ################################################################################
-# Quick demo / registry                                                          
+# registry                                                          
 ################################################################################
 
+def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_dim_fn=lambda dims: 16 if dims[2] == 0 else 8):
+    """Generate dummy batched MultiTensors using BatchInitializer."""
+    initializer = initializers_batch.BatchInitializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
+
+    target_capacities = initializer.initialize_multizeros([decoding_dim])
+    decode_weights = initializer.initialize_multilinear([decoding_dim, channel_dim_fn])
+    multiposteriors = initializer.initialize_multiposterior(decoding_dim)
+
+    # Clear weights_list as it's just for dummy data
+    initializer.weights_list.clear()
+
+    return target_capacities, decode_weights, multiposteriors
+
+
 LAYER_TEST_REGISTRY = {
-    "normalize": (layers.normalize, getattr(layers_batch, "normalize", None)),
+    "decode_latents": (layers.decode_latents, layers_batch.decode_latents, generate_decode_latents_data),
 }
 
-
-def _make_random_latents(batch_size: int = 8):
-    """Create a random MultiTensor with a leading batch dimension on leaves."""
-    n_examples, n_colors, n_x, n_y = 2, 3, 5, 5
-    system = mtsys.MultiTensorSystem(n_examples, n_colors, n_x, n_y, task=None)
-    channel_dim = 4
-
-    latents = system.make_multitensor()
-    for dims in system:
-        shape = system.shape(dims, extra_dim=channel_dim)
-        latents[dims] = torch.randn(batch_size, *shape, requires_grad=True)
-    return latents
-
-
-def run_smoke_test():
-    if layers_batch is None:
-        print("layers_batch not found – skipping smoke test.")
-        return
-    latents = _make_random_latents(batch_size=8)
-    meta_tester(layers.normalize, layers_batch.normalize, (latents,), batch_size=8)
-
-
-def run_full():
-    if layers_batch is None:
-        print("layers_batch not found – no tests to run.")
-        return
-    for name, (fn_ref, fn_batched) in LAYER_TEST_REGISTRY.items():
-        if fn_batched is None:
-            print(f"[SKIP] {name}: batched implementation missing")
-            continue
-        latents = _make_random_latents(batch_size=8)
-        meta_tester(fn_ref, fn_batched, (latents,), batch_size=8)
-
-
 if __name__ == "__main__":
-    torch.manual_seed(0)
-    np.random.seed(0)
+    dummy_system = mtsys.MultiTensorSystem(3, 4, 7, 7, None)
 
-    if len(sys.argv) > 1 and sys.argv[1] == "full":
-        run_full()
-    else:
-        run_smoke_test() 
+    for _, (ref_fn, batch_fn, generate_fn) in LAYER_TEST_REGISTRY.items():
+        batched_args = generate_fn(dummy_system)
+        meta_tester(ref_fn, batch_fn, batched_args)

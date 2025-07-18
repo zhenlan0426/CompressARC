@@ -26,7 +26,7 @@ class BatchInitializer(initializers.Initializer):
         if callable(channel_dim):
             channel_dim = channel_dim(dims)
         shape = self.multitensor_system.shape(dims, channel_dim)
-        batched_shape = (self.batch_size,) + shape
+        batched_shape = (self.batch_size,) + tuple(shape)
         mean = 0.01 * torch.randn(batched_shape)
         mean.requires_grad = True
         local_capacity_adjustment = self.initialize_zeros(dims, shape)
