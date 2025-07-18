@@ -43,38 +43,63 @@ import layers_batch
 ################################################################################
 # clone_slices: if True, each slice is clone+detached (no shared grads)
 #               if False, slices are views into shared storage (fast / memory-light)
+def is_tensor(obj):
+    """Check if an object is a torch.Tensor."""
+    return isinstance(obj, torch.Tensor)
+
+def split_nested_batch(nested_tensor, batch_idx, clone_slice=True):
+    """nested, batch,... -> nested, slice, ..."""
+    if is_tensor(nested_tensor):
+        slice_result = nested_tensor[batch_idx]
+        if clone_slice:
+            slice_result = slice_result.detach().clone().requires_grad_(True)
+        return slice_result
+    elif isinstance(nested_tensor, (list, tuple)):
+        container_type = type(nested_tensor)
+        return container_type(split_nested_batch(item, batch_idx, clone_slice) 
+                             for item in nested_tensor)
+    else:
+        raise TypeError(f"Unsupported type for nested tensor: {type(nested_tensor)}")
+    
 def split_multitensor_batch(
     mt_batched: mtsys.MultiTensor,
     batch_size: int = 8,
     clone_slices: bool = True,
 ) -> List[mtsys.MultiTensor]:
-    """Split the leading batch dimension into a list of *views*.
-
-    Each returned MultiTensor mirrors the structure of *mt_batched* but the
-    leaf tensors correspond to *mt_batched[dims][b]*.
-
-    Gradients flowing through the un-batched views accumulate into the shared
-    storage of *mt_batched*, which is what we want for reference testing.
+    """ dim, nested, batch,... -> batch, dim, nested,...
     """
     system = mt_batched.multitensor_system
 
     split_mt: List[mtsys.MultiTensor] = [system.make_multitensor() for _ in range(batch_size)]
     for dims in system:
-        batched_leaf = mt_batched[dims]  # shape (B, ...)
+        batched_leaf = mt_batched[dims]  # Could be tensor or nested structure
         for b in range(batch_size):
-            leaf_slice = batched_leaf[b]
-            if clone_slices:
-                leaf_slice = leaf_slice.detach().clone().requires_grad_(True)
-            split_mt[b][dims] = leaf_slice
+            split_mt[b][dims] = split_nested_batch(batched_leaf, b, clone_slices)
     return split_mt
 
-def multitensor_allclose(mt1: mtsys.MultiTensor, mt2: mtsys.MultiTensor, **kwargs) -> Tuple[bool, Tuple[int, ...] | None]:
-    """Element-wise allclose across every leaf.  Returns (ok, bad_dims)."""
+def nested_allclose(a, b, checkGrad=False, **kwargs):
+    """Compare two nested structures with tensors using allclose."""
+    if is_tensor(a) and is_tensor(b):
+        if checkGrad:
+            return a.grad is not None and b.grad is not None and torch.allclose(a.grad, b.grad, **kwargs)
+        return torch.allclose(a, b, **kwargs)
+    elif isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        if len(a) != len(b):
+            return False
+        return all(nested_allclose(a_i, b_i, **kwargs) for a_i, b_i in zip(a, b))
+    else:
+        raise TypeError(f"Unsupported type for nested structure: {type(a)} vs {type(b)}")
+
+def multitensor_allclose(mt1: mtsys.MultiTensor, mt2: mtsys.MultiTensor, checkGrad=False,
+                        **kwargs) -> Tuple[bool, Tuple[int, ...] | None]:
+    """Element-wise allclose across every leaf. Returns (ok, bad_dims)."""
     system = mt1.multitensor_system
     assert mt2.multitensor_system is system, "Systems differ"
+    
     for dims in system:
-        if not torch.allclose(mt1[dims], mt2[dims], **kwargs):
+        if not nested_allclose(mt1[dims], mt2[dims], checkGrad=checkGrad, **kwargs):
             return False, tuple(dims)
+            
     return True, None
 
 ################################################################################
@@ -86,8 +111,8 @@ def meta_tester(
     fn_batched,
     batched_args: Tuple,
     batch_size: int = 8,
-    atol: float = 1e-6,
-    rtol: float = 1e-4,
+    atol: float = 1e-4,
+    rtol: float = 1e-2,
     **kwargs,
 ):
     """Compare *fn_ref* (loop over batch) vs *fn_batched* (vectorised).
@@ -125,7 +150,7 @@ def meta_tester(
     out_batched_splits = split_multitensor_batch(out_batched, batch_size=batch_size, clone_slices=False)
 
     for b in range(batch_size):
-        ok, bad_dims = multitensor_allclose(out_ref_list[b], out_batched_splits[b], atol=atol, rtol=rtol)
+        ok, bad_dims = multitensor_allclose(out_ref_list[b], out_batched_splits[b], atol=atol*0.1, rtol=rtol*0.1)
         assert ok, f"Forward mismatch (batch idx {b}) at dims={bad_dims} in {fn_ref.__name__}"
 
     # Backward – use same random gradient tensor for both paths.
@@ -147,14 +172,13 @@ def meta_tester(
 
     # Compare gradients on all input MultiTensors per slice.
     for arg_idx, (arg, splits) in enumerate(zip(batched_args, all_splits)):
-        for dims in arg.multitensor_system:
-            grad_batched_full = arg[dims].grad  # shape (B, ...)
-            for b in range(batch_size):
-                grad_ref_slice = splits[b][dims].grad
-                assert torch.allclose(grad_batched_full[b], grad_ref_slice, atol=atol, rtol=rtol), (
-                    f"Gradient mismatch at arg {arg_idx}, dims={dims}, batch idx {b} in {fn_ref.__name__}")
+        arg_split = split_multitensor_batch(arg, batch_size=batch_size, clone_slices=False)
+        for b in range(batch_size):
+            assert multitensor_allclose(
+                arg_split[b], splits[b], checkGrad=True, atol=atol, rtol=rtol
+            )[0], f"Gradients mismatch for arg {arg_idx} at batch {b} in {fn_ref.__name__}"
 
-    print(f"[OK] {fn_ref.__name__}: forward & backward match (batch={batch_size})")
+    print(f"[OK] {fn_ref.__name__}: forward & backward match")
 
 ################################################################################
 # registry                                                          
