@@ -8,7 +8,7 @@ np.random.seed(0)
 torch.manual_seed(0)
 
 
-class BatchInitializer(initializers.Initializer):
+class Initializer(initializers.Initializer):
     def __init__(self, multitensor_system, channel_dim_fn, batch_size=1, batch_weights=False):
         super().__init__(multitensor_system, channel_dim_fn)
         self.batch_size = batch_size
