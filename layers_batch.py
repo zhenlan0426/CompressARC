@@ -14,6 +14,21 @@ This file contains batched versions of some layers, vectorized over the batch di
 np.random.seed(0)
 torch.manual_seed(0)
 
+@multitensor_systems.multify
+def normalize(dims, x, debias=True):
+    """
+    Normalize the tensor to have variance one, for every index along the channel dimension.
+    Args:
+        dims (list[int]): Tells you which tensor in the multitensor system we're normalizing
+        x (Tensor): Tensor to normalize.
+    Returns:
+        Tensor: Normalized tensor.
+    """
+    all_but_last = list(range(1, len(x.shape)-1)) # all but batch and channel dimensions
+    if debias:
+        x = x - torch.mean(x, dim=all_but_last, keepdim=True)
+    x = x / torch.sqrt(1e-8+torch.mean(x**2, dim=all_but_last, keepdim=True))
+    return x
 
 def channel_layer(target_capacity, posterior):
     """

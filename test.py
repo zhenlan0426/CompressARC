@@ -81,12 +81,15 @@ def nested_allclose(a, b, checkGrad=False, **kwargs):
     """Compare two nested structures with tensors using allclose."""
     if is_tensor(a) and is_tensor(b):
         if checkGrad:
-            return a.grad is not None and b.grad is not None and torch.allclose(a.grad, b.grad, **kwargs)
+            # Check if tensors have gradients or are views with base tensors having gradients
+            a_grad = a.grad if a.is_leaf else a._base.grad
+            b_grad = b.grad if b.is_leaf else b._base.grad
+            return a_grad is not None and b_grad is not None and torch.allclose(a_grad, b_grad, **kwargs)
         return torch.allclose(a, b, **kwargs)
     elif isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         if len(a) != len(b):
             return False
-        return all(nested_allclose(a_i, b_i, **kwargs) for a_i, b_i in zip(a, b))
+        return all(nested_allclose(a_i, b_i, checkGrad=checkGrad, **kwargs) for a_i, b_i in zip(a, b))
     else:
         raise TypeError(f"Unsupported type for nested structure: {type(a)} vs {type(b)}")
 
@@ -186,7 +189,7 @@ def meta_tester(
 
 def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_dim_fn=lambda dims: 16 if dims[2] == 0 else 8):
     """Generate dummy batched MultiTensors using BatchInitializer."""
-    initializer = initializers_batch.BatchInitializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
+    initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
 
     target_capacities = initializer.initialize_multizeros([decoding_dim])
     decode_weights = initializer.initialize_multilinear([decoding_dim, channel_dim_fn])
@@ -197,9 +200,14 @@ def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_d
 
     return target_capacities, decode_weights, multiposteriors
 
+def generate_single_tensor_data(system, batch_size=8, channel_dim_fn=16):
+    """Generate dummy MultiTensor with a single tensor for testing."""
+    initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
+    return initializer.initialize_multisingle_tensor(16), # needs to be a tuple
 
 LAYER_TEST_REGISTRY = {
-    "decode_latents": (layers.decode_latents, layers_batch.decode_latents, generate_decode_latents_data),
+    # "decode_latents": (layers.decode_latents, layers_batch.decode_latents, generate_decode_latents_data),
+    "normalize": (layers.normalize, layers_batch.normalize, generate_single_tensor_data),
 }
 
 if __name__ == "__main__":

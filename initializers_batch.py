@@ -9,7 +9,7 @@ torch.manual_seed(0)
 
 
 class Initializer(initializers.Initializer):
-    def __init__(self, multitensor_system, channel_dim_fn, batch_size=1, batch_weights=False):
+    def __init__(self, multitensor_system, channel_dim_fn, batch_size=8, batch_weights=True):
         super().__init__(multitensor_system, channel_dim_fn)
         self.batch_size = batch_size
         self.batch_weights = batch_weights
@@ -51,4 +51,19 @@ class Initializer(initializers.Initializer):
         weight.requires_grad = True
         bias.requires_grad = True
         self.weights_list.extend([weight, bias])
-        return [weight, bias] 
+        return [weight, bias]
+    
+    def initialize_single_tensor(self, dims, channel_dim):
+        if callable(channel_dim):
+            channel_dim = channel_dim(dims)
+        shape = self.multitensor_system.shape(dims, channel_dim)
+        batched_shape = (self.batch_size,) + tuple(shape)
+        single_tensor = torch.randn(batched_shape, requires_grad=True)
+        self.weights_list.append(single_tensor)
+        return single_tensor
+    
+    def initialize_multisingle_tensor(self, channel_dim):
+        return multitensor_systems.multify(self.initialize_single_tensor)(
+            self.multitensor_system.make_multitensor(default=channel_dim)
+        )
+        
