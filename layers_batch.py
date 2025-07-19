@@ -92,7 +92,7 @@ def batched_affine(x, weight, use_bias=False):
 @multitensor_systems.multify
 def affine(dims, x, weight, use_bias=False):
     batch_size = x.shape[0]
-    num_spatial = len(x.shape) - 2
+    num_spatial = len(x.shape) - 3
     w = weight[0]
     if w.dim() == 3:
         # batch matmul
@@ -101,7 +101,7 @@ def affine(dims, x, weight, use_bias=False):
     if use_bias:
         b = weight[1]
         if b.dim() == 2:
-            b = b.view(batch_size, *((1,) * num_spatial), b.shape[-1])
+            b = b.view(batch_size, *((1,) * (num_spatial+1)), b.shape[-1])
         x = x + b
     return x
 

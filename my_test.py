@@ -59,6 +59,8 @@ def split_nested_batch(nested_tensor, batch_idx, clone_slice=True):
         container_type = type(nested_tensor)
         return container_type(split_nested_batch(item, batch_idx, clone_slice) 
                              for item in nested_tensor)
+    elif nested_tensor is None:
+        return None
     else:
         raise TypeError(f"Unsupported type for nested tensor: {type(nested_tensor)}")
     
@@ -86,6 +88,8 @@ def nested_allclose(a, b, **kwargs):
         if len(a) != len(b):
             return False
         return all(nested_allclose(a_i, b_i, **kwargs) for a_i, b_i in zip(a, b))
+    elif a is None and b is None:
+        return True
     else:
         raise TypeError(f"Unsupported type for nested structure: {type(a)} vs {type(b)}")
 
@@ -194,7 +198,7 @@ def meta_tester(
             ok, bad_dims = multitensor_allclose(split_grads[b], ref_grad_mt, atol=atol, rtol=rtol)
             assert ok, f"Gradients mismatch for arg {arg_idx} at batch {b} in Function {name} at dims={bad_dims}"
 
-    print(f"[PASSED] Function {name}: forward & backward match")
+    print(f"[PASSED] Function \033[1m{name}\033[0m: forward & backward match")
 
     # time batched vs unbatched
     start_time = time.time()
@@ -254,18 +258,24 @@ LAYER_TEST_REGISTRY = {
         "generate": generate_single_tensor_data,
         "kwargs": {},
     },
-    # "affine_batched_weights": {
-    #     "ref": layers.affine,
-    #     "batched": layers_batch.affine,
-    #     "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=True),
-    #     "kwargs": {"use_bias": True},
-    # },
-    # "affine_shared_weights": {
-    #     "ref": layers.affine,
-    #     "batched": layers_batch.affine,
-    #     "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=False),
-    #     "kwargs": {"use_bias": True},
-    # },
+    "affine_batched_weights": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=True),
+        "kwargs": {"use_bias": True},
+    },
+    "affine_batched_weights_no_bias": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=True),
+        "kwargs": {"use_bias": False},
+    },    
+    "affine_shared_weights": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=False),
+        "kwargs": {"use_bias": True},
+    },
 }
 
 if __name__ == "__main__":
