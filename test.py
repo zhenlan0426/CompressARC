@@ -27,6 +27,7 @@ bottom of the file.
 
 import sys
 from typing import List, Tuple
+import time
 
 import numpy as np
 import torch
@@ -77,39 +78,44 @@ def split_multitensor_batch(
             split_mt[b][dims] = split_nested_batch(batched_leaf, b, clone_slices)
     return split_mt
 
-def nested_allclose(a, b, checkGrad=False, **kwargs):
+def nested_allclose(a, b, **kwargs):
     """Compare two nested structures with tensors using allclose."""
     if is_tensor(a) and is_tensor(b):
-        if checkGrad:
-            # Check if tensors have gradients or are views with base tensors having gradients
-            a_grad = a.grad if a.is_leaf else a._base.grad
-            b_grad = b.grad if b.is_leaf else b._base.grad
-            return a_grad is not None and b_grad is not None and torch.allclose(a_grad, b_grad, **kwargs)
         return torch.allclose(a, b, **kwargs)
     elif isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
         if len(a) != len(b):
             return False
-        return all(nested_allclose(a_i, b_i, checkGrad=checkGrad, **kwargs) for a_i, b_i in zip(a, b))
+        return all(nested_allclose(a_i, b_i, **kwargs) for a_i, b_i in zip(a, b))
     else:
         raise TypeError(f"Unsupported type for nested structure: {type(a)} vs {type(b)}")
 
-def multitensor_allclose(mt1: mtsys.MultiTensor, mt2: mtsys.MultiTensor, checkGrad=False,
+def multitensor_allclose(mt1: mtsys.MultiTensor, mt2: mtsys.MultiTensor,
                         **kwargs) -> Tuple[bool, Tuple[int, ...] | None]:
     """Element-wise allclose across every leaf. Returns (ok, bad_dims)."""
     system = mt1.multitensor_system
     assert mt2.multitensor_system is system, "Systems differ"
     
     for dims in system:
-        if not nested_allclose(mt1[dims], mt2[dims], checkGrad=checkGrad, **kwargs):
+        if not nested_allclose(mt1[dims], mt2[dims], **kwargs):
             return False, tuple(dims)
             
     return True, None
+
+def get_nested_grad(obj):
+    if is_tensor(obj):
+        return obj.grad
+    elif isinstance(obj, (list, tuple)):
+        container_type = type(obj)
+        return container_type(get_nested_grad(item) for item in obj)
+    else:
+        raise TypeError(f"Unsupported type for getting grad: {type(obj)}")
 
 ################################################################################
 # Meta-tester                                                                    
 ################################################################################
 
 def meta_tester(
+    name,
     fn_ref,
     fn_batched,
     batched_args: Tuple,
@@ -122,6 +128,8 @@ def meta_tester(
 
     Parameters
     ----------
+    name : str
+        Name of the layer to test.
     fn_ref : callable
         Original layer – expects *un-batched* MultiTensor inputs.
     fn_batched : callable
@@ -175,13 +183,38 @@ def meta_tester(
 
     # Compare gradients on all input MultiTensors per slice.
     for arg_idx, (arg, splits) in enumerate(zip(batched_args, all_splits)):
-        arg_split = split_multitensor_batch(arg, batch_size=batch_size, clone_slices=False)
+        batched_grad_mt = arg.multitensor_system.make_multitensor()
+        for dims in arg.multitensor_system:
+            batched_grad_mt[dims] = get_nested_grad(arg[dims])
+        split_grads = split_multitensor_batch(batched_grad_mt, batch_size=batch_size, clone_slices=False)
         for b in range(batch_size):
-            assert multitensor_allclose(
-                arg_split[b], splits[b], checkGrad=True, atol=atol, rtol=rtol
-            )[0], f"Gradients mismatch for arg {arg_idx} at batch {b} in {fn_ref.__name__}"
+            ref_grad_mt = arg.multitensor_system.make_multitensor()
+            for dims in arg.multitensor_system:
+                ref_grad_mt[dims] = get_nested_grad(splits[b][dims])
+            ok, bad_dims = multitensor_allclose(split_grads[b], ref_grad_mt, atol=atol, rtol=rtol)
+            assert ok, f"Gradients mismatch for arg {arg_idx} at batch {b} in Function {name} at dims={bad_dims}"
 
-    print(f"[OK] {fn_ref.__name__}: forward & backward match")
+    print(f"[PASSED] Function {name}: forward & backward match")
+
+    # time batched vs unbatched
+    start_time = time.time()
+    for _ in range(10):
+        out_ref_list = [fn_ref(*args_b, **kwargs) for args_b in per_batch_args]
+        for b in range(batch_size):
+            loss_ref_b = sum(
+                (out_ref_list[b][dims] * grad_mt[dims][b]).sum() for dims in out_batched.multitensor_system
+            )
+            loss_ref_b.backward()
+    unbatched_time = time.time() - start_time
+
+    start_time = time.time()
+    for _ in range(10):
+        out_batched = fn_batched(*batched_args, **kwargs)
+        loss_batched = sum((out_batched[dims] * grad_mt[dims]).sum() for dims in out_batched.multitensor_system)
+        loss_batched.backward()
+    batched_time = time.time() - start_time
+    print(f"Time for unbatched: {unbatched_time:.2f} seconds, time for batched: {batched_time:.2f} seconds, ratio: {unbatched_time/batched_time:.2f}")
+    
 
 ################################################################################
 # registry                                                          
@@ -213,6 +246,6 @@ LAYER_TEST_REGISTRY = {
 if __name__ == "__main__":
     dummy_system = mtsys.MultiTensorSystem(3, 4, 7, 7, None)
 
-    for _, (ref_fn, batch_fn, generate_fn) in LAYER_TEST_REGISTRY.items():
+    for name, (ref_fn, batch_fn, generate_fn) in LAYER_TEST_REGISTRY.items():
         batched_args = generate_fn(dummy_system)
-        meta_tester(ref_fn, batch_fn, batched_args)
+        meta_tester(name, ref_fn, batch_fn, batched_args)
