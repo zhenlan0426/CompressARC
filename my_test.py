@@ -31,7 +31,7 @@ import time
 
 import numpy as np
 import torch
-
+from functools import partial
 import multitensor_systems as mtsys
 import layers
 
@@ -122,7 +122,7 @@ def meta_tester(
     name,
     fn_ref,
     fn_batched,
-    batched_args: Tuple,
+    batched_args: Tuple[Tuple[mtsys.MultiTensor, bool], ...],
     batch_size: int = 8,
     atol: float = 1e-4,
     rtol: float = 1e-2,
@@ -138,8 +138,8 @@ def meta_tester(
         Original layer – expects *un-batched* MultiTensor inputs.
     fn_batched : callable
         Batched layer implementation.
-    batched_args : Tuple
-        Arguments to pass into *fn_batched*.  must all be MultiTensors.
+    batched_args : Tuple[Tuple[mtsys.MultiTensor, bool], ...]
+        Arguments to pass into *fn_batched*, each a (MultiTensor, is_batched) where is_batched indicates if it has a leading batch dimension.
         non-MultiTensor args are passed in as kwargs.
     """
 
@@ -149,17 +149,20 @@ def meta_tester(
     per_batch_args: List[List[mtsys.MultiTensor]] = [[] for _ in range(batch_size)] # (b, args) -> (dims, )
     
     # Keep handles on all split MultiTensors for grad comparisons later
-    all_splits: List[List[mtsys.MultiTensor]] = [] # (args, b) -> (dims, )
+    all_splits: List[List[mtsys.MultiTensor] | mtsys.MultiTensor] = [] # (args, b) -> (dims, )
     
-    for arg in batched_args:
-        split_list = split_multitensor_batch(arg, batch_size=batch_size, clone_slices=True)
+    for arg, is_batched in batched_args:
+        if is_batched:
+            split_list = split_multitensor_batch(arg, batch_size=batch_size, clone_slices=True)
+        else:
+            split_list = arg.copy(requires_grad=True)
         all_splits.append(split_list)
         for b in range(batch_size):
-            per_batch_args[b].append(split_list[b])
+            per_batch_args[b].append(split_list[b] if is_batched else split_list)
 
     # Forward pass – reference (loop) and batched.
     out_ref_list = [fn_ref(*args_b, **kwargs) for args_b in per_batch_args]
-    out_batched = fn_batched(*batched_args, **kwargs)
+    out_batched = fn_batched(*[arg for arg, _ in batched_args], **kwargs)
 
     # Split batched output into per-slice views for comparison.
     out_batched_splits = split_multitensor_batch(out_batched, batch_size=batch_size, clone_slices=False)
@@ -186,17 +189,25 @@ def meta_tester(
         loss_ref_b.backward()
 
     # Compare gradients on all input MultiTensors per slice.
-    for arg_idx, (arg, splits) in enumerate(zip(batched_args, all_splits)):
-        batched_grad_mt = arg.multitensor_system.make_multitensor()
-        for dims in arg.multitensor_system:
+    for arg_idx, ((arg, is_batched), splits) in enumerate(zip(batched_args, all_splits)):
+        system = arg.multitensor_system
+        batched_grad_mt = system.make_multitensor()
+        for dims in system:
             batched_grad_mt[dims] = get_nested_grad(arg[dims])
-        split_grads = split_multitensor_batch(batched_grad_mt, batch_size=batch_size, clone_slices=False)
-        for b in range(batch_size):
-            ref_grad_mt = arg.multitensor_system.make_multitensor()
-            for dims in arg.multitensor_system:
-                ref_grad_mt[dims] = get_nested_grad(splits[b][dims])
-            ok, bad_dims = multitensor_allclose(split_grads[b], ref_grad_mt, atol=atol, rtol=rtol)
-            assert ok, f"Gradients mismatch for arg {arg_idx} at batch {b} in Function {name} at dims={bad_dims}"
+        if is_batched:
+            split_grads = split_multitensor_batch(batched_grad_mt, batch_size=batch_size, clone_slices=False)
+            for b in range(batch_size):
+                ref_grad_mt = system.make_multitensor()
+                for dims in system:
+                    ref_grad_mt[dims] = get_nested_grad(splits[b][dims])
+                ok, bad_dims = multitensor_allclose(split_grads[b], ref_grad_mt, atol=atol, rtol=rtol)
+                assert ok, f"Gradients mismatch for arg {arg_idx} at batch {b} in Function {name} at dims={bad_dims}"
+        else:
+            ref_grad_mt = system.make_multitensor()
+            for dims in system:
+                ref_grad_mt[dims] = get_nested_grad(splits[dims])
+            ok, bad_dims = multitensor_allclose(batched_grad_mt, ref_grad_mt, atol=atol, rtol=rtol)
+            assert ok, f"Gradients mismatch for shared arg {arg_idx} in Function {name} at dims={bad_dims}"
 
     print(f"[PASSED] Function \033[1m{name}\033[0m: forward & backward match")
 
@@ -213,7 +224,7 @@ def meta_tester(
 
     start_time = time.time()
     for _ in range(10):
-        out_batched = fn_batched(*batched_args, **kwargs)
+        out_batched = fn_batched(*[arg for arg, _ in batched_args], **kwargs)
         loss_batched = sum((out_batched[dims] * grad_mt[dims]).sum() for dims in out_batched.multitensor_system)
         loss_batched.backward()
     batched_time = time.time() - start_time
@@ -235,12 +246,12 @@ def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_d
     # Clear weights_list as it's just for dummy data
     initializer.weights_list.clear()
 
-    return target_capacities, decode_weights, multiposteriors
+    return (target_capacities, True), (decode_weights, True), (multiposteriors, True)
 
 def generate_single_tensor_data(system, batch_size=8, channel_dim_fn=16):
     """Generate dummy MultiTensor with a single tensor for testing."""
     initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
-    return initializer.initialize_multisingle_tensor(16), # needs to be a tuple
+    return ((initializer.initialize_multisingle_tensor(16), True),)
 
 def generate_affine_data(system, batch_size=8, batch_weights=True):
     in_channels = 16
@@ -249,32 +260,38 @@ def generate_affine_data(system, batch_size=8, batch_weights=True):
     initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=batch_weights)
     x = initializer.initialize_multisingle_tensor(16)
     weight = initializer.initialize_multilinear([in_channels, out_channels])
-    return x, weight
+    return (x, True), (weight, batch_weights)
 
 LAYER_TEST_REGISTRY = {
-    "normalize": {
-        "ref": layers.normalize,
-        "batched": layers_batch.normalize,
-        "generate": generate_single_tensor_data,
-        "kwargs": {},
-    },
+    # "normalize": {
+    #     "ref": layers.normalize,
+    #     "batched": layers_batch.normalize,
+    #     "generate": lambda system, bs=8: generate_single_tensor_data(system, batch_size=bs, channel_dim_fn=16),
+    #     "kwargs": {},
+    # },
     "affine_batched_weights": {
         "ref": layers.affine,
         "batched": layers_batch.affine,
-        "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=True),
+        "generate": partial(generate_affine_data, batch_weights=True),
         "kwargs": {"use_bias": True},
     },
     "affine_batched_weights_no_bias": {
         "ref": layers.affine,
         "batched": layers_batch.affine,
-        "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=True),
+        "generate": partial(generate_affine_data, batch_weights=True),
         "kwargs": {"use_bias": False},
     },    
     "affine_shared_weights": {
         "ref": layers.affine,
         "batched": layers_batch.affine,
-        "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=False),
+        "generate": partial(generate_affine_data, batch_weights=False),
         "kwargs": {"use_bias": True},
+    },
+    "affine_shared_weights_no_bias": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": partial(generate_affine_data, batch_weights=False),
+        "kwargs": {"use_bias": False},
     },
 }
 

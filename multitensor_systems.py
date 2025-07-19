@@ -147,6 +147,32 @@ class MultiTensor:
             d = d[dim_val]
         d[dims[-1]] = value
 
+    def copy(self, requires_grad=False):
+        """
+        Creates a deep copy of the MultiTensor, optionally setting requires_grad on tensor leaves.
+        
+        Args:
+            requires_grad (bool): Whether to set requires_grad=True on copied tensors. Defaults to False.
+        
+        Returns:
+            MultiTensor: A new MultiTensor with copied data.
+        """
+        def recursive_copy(data):
+            if not isinstance(data, (list, tuple)):
+                if isinstance(data, torch.Tensor):
+                    copied = data.detach().clone()
+                    copied.requires_grad = requires_grad
+                    return copied
+                elif data is None:
+                    return None
+                else:
+                    raise ValueError(f"Unsupported data type: {type(data)}")
+            else:
+                return [recursive_copy(sub) for sub in data]
+
+        new_data = recursive_copy(self.data)
+        return MultiTensor(new_data, self.multitensor_system)
+
 
 def multify(fn):
     """
