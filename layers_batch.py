@@ -89,6 +89,23 @@ def batched_affine(x, weight, use_bias=False):
     return x
 
 
+@multitensor_systems.multify
+def affine(dims, x, weight, use_bias=False):
+    batch_size = x.shape[0]
+    num_spatial = len(x.shape) - 2
+    w = weight[0]
+    if w.dim() == 3:
+        # batch matmul
+        w = w.view(batch_size, *((1,) * num_spatial), *w.shape[-2:])
+    x = torch.matmul(x, w)
+    if use_bias:
+        b = weight[1]
+        if b.dim() == 2:
+            b = b.view(batch_size, *((1,) * num_spatial), b.shape[-1])
+        x = x + b
+    return x
+
+
 def decode_latents(target_capacities, decode_weights, multiposteriors):
     """
     Batched version of decode_latents. Uses channel_layer and the original affine,

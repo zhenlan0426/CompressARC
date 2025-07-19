@@ -162,7 +162,7 @@ def meta_tester(
 
     for b in range(batch_size):
         ok, bad_dims = multitensor_allclose(out_ref_list[b], out_batched_splits[b], atol=atol*0.1, rtol=rtol*0.1)
-        assert ok, f"Forward mismatch (batch idx {b}) at dims={bad_dims} in {fn_ref.__name__}"
+        assert ok, f"Forward mismatch (batch idx {b}) at dims={bad_dims} in {name}"
 
     # Backward – use same random gradient tensor for both paths.
     # Build a gradient MultiTensor with matching leaves.
@@ -238,14 +238,40 @@ def generate_single_tensor_data(system, batch_size=8, channel_dim_fn=16):
     initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
     return initializer.initialize_multisingle_tensor(16), # needs to be a tuple
 
+def generate_affine_data(system, batch_size=8, batch_weights=True):
+    in_channels = 16
+    out_channels = 32
+    channel_dim_fn = 16
+    initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=batch_weights)
+    x = initializer.initialize_multisingle_tensor(16)
+    weight = initializer.initialize_multilinear([in_channels, out_channels])
+    return x, weight
+
 LAYER_TEST_REGISTRY = {
-    # "decode_latents": (layers.decode_latents, layers_batch.decode_latents, generate_decode_latents_data),
-    "normalize": (layers.normalize, layers_batch.normalize, generate_single_tensor_data),
+    "normalize": {
+        "ref": layers.normalize,
+        "batched": layers_batch.normalize,
+        "generate": generate_single_tensor_data,
+        "kwargs": {},
+    },
+    # "affine_batched_weights": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=True),
+    #     "kwargs": {"use_bias": True},
+    # },
+    # "affine_shared_weights": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": lambda s, bs=8: generate_affine_data(s, batch_size=bs, batch_weights=False),
+    #     "kwargs": {"use_bias": True},
+    # },
 }
 
 if __name__ == "__main__":
     dummy_system = mtsys.MultiTensorSystem(3, 4, 7, 7, None)
 
-    for name, (ref_fn, batch_fn, generate_fn) in LAYER_TEST_REGISTRY.items():
-        batched_args = generate_fn(dummy_system)
-        meta_tester(name, ref_fn, batch_fn, batched_args)
+    for name, info in LAYER_TEST_REGISTRY.items():
+        generate = info['generate']
+        batched_args = generate(dummy_system)
+        meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
