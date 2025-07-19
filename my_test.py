@@ -9,15 +9,10 @@ Assume you have implemented a module `layers_batch.py` that mirrors the
 API of the existing `layers.py` but supports a leading batch dimension
 on every leaf tensor of a `MultiTensor`.
 
-```
-python test.py            # runs a quick smoke-test on layers.normalize
-python test.py full       # runs all registered meta-tests
-```
 
 The script provides:
 ====================
 * split_multitensor_batch   – view-only slice of a batched MultiTensor
-* stack_multitensor_batch   – inverse of split_* (torch.stack along batch)
 * multitensor_allclose      – element-wise comparison of two MultiTensors
 * meta_tester               – generic forward/backward equivalence test
 

@@ -30,6 +30,51 @@ def normalize(dims, x, debias=True):
     x = x / torch.sqrt(1e-8+torch.mean(x**2, dim=all_but_last, keepdim=True))
     return x
 
+@multitensor_systems.multify
+def affine(dims, x, weight, use_bias=False):
+    batch_size = x.shape[0]
+    num_spatial = len(x.shape) - 3
+    w = weight[0]
+    if w.dim() == 3:
+        # batch matmul
+        w = w.view(batch_size, *((1,) * num_spatial), *w.shape[-2:])
+    x = torch.matmul(x, w)
+    if use_bias:
+        b = weight[1]
+        if b.dim() == 2:
+            b = b.view(batch_size, *((1,) * (num_spatial+1)), b.shape[-1])
+        x = x + b
+    return x
+
+# layer is a leaf function, i.e. it takes one of the multitensor and returns the same type of multitensor
+# leaf functions needs to take dims as the first argument. add_residual takes a leaf function and returns a new leaf function.
+# @multitensor_systems.multify
+# @add_residual
+# def softmax(dims, x):...
+# softmax is a leaf function -> add_residual(softmax) is a new leaf function. -> multify(add_residual(softmax)) applies
+# to all the tensors in the multitensor system.
+def add_residual(layer):
+    """
+    Surround a layer/operation with a residual connection, up and down projections,
+    and pre/post-norms.
+    Args:
+        layer (Callable): The layer/operation to modify.
+    Returns:
+        Callable: Another layer/operation that applies the original layer with the
+                above modifications.
+    """
+    def layer_with_residual(dims, x, residual_weights, *args,
+                            use_bias=False, pre_norm=False, post_norm=False, **kwargs):
+        if pre_norm:
+            z = normalize(x)
+        z = affine(x, residual_weights[0], use_bias=use_bias)
+        z = layer(dims, z, *args, **kwargs)
+        if post_norm:
+            z = normalize(z)
+        z = affine(z, residual_weights[1], use_bias=use_bias)
+        return x + z
+    return layer_with_residual
+
 def channel_layer(target_capacity, posterior):
     """
     Batched version of channel_layer. Assumes inputs have a prepended batch dimension.
@@ -78,34 +123,6 @@ def channel_layer(target_capacity, posterior):
     KL = 0.5 * (noise_var + signal_var * normalized_mean ** 2 - 1) + desired_local_capacity / dimensionality
     return z, KL
 
-
-def batched_affine(x, weight, use_bias=False):
-    num_spatial = len(x.shape) - 2
-    w = weight[0].view(*weight[0].shape[:-2], *((1,) * num_spatial), *weight[0].shape[-2:])
-    x = torch.matmul(x, w)
-    if use_bias:
-        b = weight[1].view(*weight[1].shape[:-1], *((1,) * num_spatial), weight[1].shape[-1])
-        x = x + b
-    return x
-
-
-@multitensor_systems.multify
-def affine(dims, x, weight, use_bias=False):
-    batch_size = x.shape[0]
-    num_spatial = len(x.shape) - 3
-    w = weight[0]
-    if w.dim() == 3:
-        # batch matmul
-        w = w.view(batch_size, *((1,) * num_spatial), *w.shape[-2:])
-    x = torch.matmul(x, w)
-    if use_bias:
-        b = weight[1]
-        if b.dim() == 2:
-            b = b.view(batch_size, *((1,) * (num_spatial+1)), b.shape[-1])
-        x = x + b
-    return x
-
-
 def decode_latents(target_capacities, decode_weights, multiposteriors):
     """
     Batched version of decode_latents. Uses channel_layer and the original affine,
@@ -117,7 +134,7 @@ def decode_latents(target_capacities, decode_weights, multiposteriors):
     @multitensor_systems.multify
     def decode_latents_(dims, target_capacity, decode_weight, posterior):
         z, KL = channel_layer(target_capacity, posterior)
-        x = batched_affine(z, decode_weight, use_bias=True)
+        x = affine(z, decode_weight, use_bias=True)
         KL_amounts.append(KL)
         KL_names.append(str(dims))
         return x
