@@ -115,8 +115,9 @@ def channel_layer(target_capacity, posterior):
                                  torch.mean(local_capacity_adjustment, dim=all_but_last_dim))
     desired_local_capacity = torch.exp(local_capacity_adjustment)*init_capacity + min_capacity
 
-    # Figure out what signal-to-noise ratio is required to achieve desired_local_capacity, and compute how much
-    # signal and how much noise for them to sum to one. Numerically stable formulae for these are used below.
+    # 1) SNR = exp(2 * (C / dim)) - 1 = signal_var / noise_var from AWGN channel capacity formula
+    # 2)signal_var + noise_var = 1 to keep variance constant
+    # with #1 and #2, we can solve for signal_var and noise_var
     noise_std = torch.exp(-desired_local_capacity / dimensionality)
     noise_var = noise_std**2
     stable_sqrt1memx = lambda x: torch.where(x>20, 1, torch.sqrt(1-torch.exp(-x)))
