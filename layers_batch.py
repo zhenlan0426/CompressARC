@@ -5,8 +5,6 @@ import torch
 
 import multitensor_systems
 
-from layers import affine
-
 """
 This file contains batched versions of some layers, vectorized over the batch dimension.
 """
@@ -79,6 +77,9 @@ def channel_layer(target_capacity, posterior):
     """
     Batched version of channel_layer. Assumes inputs have a prepended batch dimension.
     Operations are vectorized over the batch dim.
+    Args:
+        target_capacity (Tensor): of shape (batch_size, decoding_dim)
+        posterior (Tensor, Tensor): of shape (batch_size, *spatial_dims, decoding_dim)
     """
     mean, local_capacity_adjustment = posterior
 
@@ -92,15 +93,14 @@ def channel_layer(target_capacity, posterior):
 
     min_capacity = torch.tensor(0.5, device=mean.device)
     init_capacity = torch.tensor(10000, device=mean.device)
-
+    target_capacity = target_capacity.view(batch_size, *((1,) * num_spatial_dims), -1)
     target_capacity = 10 * target_capacity
 
     desired_global_capacity = torch.exp(target_capacity) * init_capacity + min_capacity
     output_scaling = 1 - torch.exp(-desired_global_capacity / dimensionality * 2)
 
     local_mean = torch.mean(local_capacity_adjustment, dim=all_but_batch_and_channel, keepdim=True)
-    target_capacity_viewed = target_capacity.view(batch_size, *((1,) * num_spatial_dims), -1)
-    local_capacity_adjustment = (target_capacity_viewed + local_capacity_adjustment - local_mean)
+    local_capacity_adjustment = (target_capacity + local_capacity_adjustment - local_mean)
 
     desired_local_capacity = torch.exp(local_capacity_adjustment) * init_capacity + min_capacity
 
@@ -111,11 +111,10 @@ def channel_layer(target_capacity, posterior):
     signal_std = stable_sqrt1memx(desired_local_capacity / dimensionality * 2)
     signal_var = 1 - noise_var
 
-    mean_mean = torch.mean(mean, dim=all_but_batch_and_channel, keepdim=True)
-    normalized_mean = mean - mean_mean
+    normalized_mean = mean - torch.mean(mean, dim=all_but_batch_and_channel, keepdim=True)
     normalized_mean = normalized_mean / torch.sqrt(torch.mean(normalized_mean ** 2 + 1e-8, dim=all_but_batch_and_channel, keepdim=True))
 
-    z = signal_std * normalized_mean
+    z = signal_std * normalized_mean + noise_std * torch.randn_like(mean)
 
     output_scaling = output_scaling.view(batch_size, *((1,) * num_spatial_dims), -1)
     z = output_scaling * z
@@ -141,3 +140,23 @@ def decode_latents(target_capacities, decode_weights, multiposteriors):
 
     x = decode_latents_(target_capacities, decode_weights, multiposteriors)
     return x, KL_amounts, KL_names 
+
+@multitensor_systems.multify
+@add_residual
+def softmax(dims, x):
+    """
+    Batched version of softmax. x has a prepended batch dimension. Do not softmax over batch.
+    """
+    axes = list(range(1, 1 + sum(dims)))
+    if dims[0]==1:
+        axes.pop(0)  # don't softmax over examples
+    subsets_of_axes = []
+    for subset_size in range(1, len(axes)+1):
+        subsets_of_axes = subsets_of_axes + list(itertools.combinations(axes, subset_size))
+    softmaxxes = []
+    for subset in subsets_of_axes:
+        offsets = torch.amax(x, dim=subset, keepdim=True)
+        softmax = torch.exp(x-offsets)
+        softmax = softmax / torch.sum(softmax, dim=subset, keepdim=True)
+        softmaxxes.append(softmax)
+    return torch.cat(softmaxxes, dim=-1) 

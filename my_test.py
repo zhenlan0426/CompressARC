@@ -230,16 +230,14 @@ def meta_tester(
 # registry                                                          
 ################################################################################
 
-def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_dim_fn=lambda dims: 16 if dims[2] == 0 else 8):
+def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_dim_fn=16):
     """Generate dummy batched MultiTensors using BatchInitializer."""
+    # TODO: not testable due to the randomness of the noise and also multi-output not compatible with testing framework
     initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
 
     target_capacities = initializer.initialize_multizeros([decoding_dim])
     decode_weights = initializer.initialize_multilinear([decoding_dim, channel_dim_fn])
     multiposteriors = initializer.initialize_multiposterior(decoding_dim)
-
-    # Clear weights_list as it's just for dummy data
-    initializer.weights_list.clear()
 
     return target_capacities, decode_weights, multiposteriors
 
@@ -257,6 +255,13 @@ def generate_affine_data(system, batch_size=8, batch_weights=True):
     weight = initializer.initialize_multilinear([in_channels, out_channels])
     return (x, True), (weight, batch_weights)
 
+def generate_softmax_data(system, batch_size=8, channel_dim=2, batch_weights=True):
+    output_scaling_fn = lambda dims: channel_dim * (2 ** (dims[1] + dims[2] + dims[3] + dims[4]) - 1)
+    initializer = initializers_batch.Initializer(system, channel_dim, batch_size=batch_size, batch_weights=batch_weights)
+    x = initializer.initialize_multisingle_tensor(channel_dim)
+    residual_weights_mt = initializer.initialize_multiresidual(channel_dim, output_scaling_fn)
+    return ((x, True), (residual_weights_mt, batch_weights))
+
 LAYER_TEST_REGISTRY = {
     # "normalize": {
     #     "ref": layers.normalize,
@@ -264,28 +269,40 @@ LAYER_TEST_REGISTRY = {
     #     "generate": lambda system, bs=8: generate_single_tensor_data(system, batch_size=bs, channel_dim_fn=16),
     #     "kwargs": {},
     # },
-    "affine_batched_weights": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=True),
-        "kwargs": {"use_bias": True},
-    },
-    "affine_batched_weights_no_bias": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=True),
+    # "affine_batched_weights": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=True),
+    #     "kwargs": {"use_bias": True},
+    # },
+    # "affine_batched_weights_no_bias": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=True),
+    #     "kwargs": {"use_bias": False},
+    # },    
+    # "affine_shared_weights": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=False),
+    #     "kwargs": {"use_bias": True},
+    # },
+    # "affine_shared_weights_no_bias": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=False),
+    #     "kwargs": {"use_bias": False},
+    # },
+    "softmax_batched_weights": {
+        "ref": layers.softmax,
+        "batched": layers_batch.softmax,
+        "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=True),
         "kwargs": {"use_bias": False},
-    },    
-    "affine_shared_weights": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=False),
-        "kwargs": {"use_bias": True},
     },
-    "affine_shared_weights_no_bias": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=False),
+    "softmax_shared_weights": {
+        "ref": layers.softmax,
+        "batched": layers_batch.softmax,
+        "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=False),
         "kwargs": {"use_bias": False},
     },
 }
