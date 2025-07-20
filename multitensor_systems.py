@@ -121,7 +121,45 @@ class MultiTensor:
         """
         self.data = data
         self.multitensor_system = multitensor_system
+    
+    def _summarize(self, item, depth=0):
+        """Recursively build a readable string representation for a nested
+        structure whose leaves can be torch.Tensors (or any object exposing
+        a ``shape`` attribute). For list/tuple containers we display their
+        type and recurse into each element. Indentation is used to make the
+        hierarchy visually clear.
+        Args:
+            item: The current element to summarise.
+            depth (int): Current recursion depth – controls indentation.
+        Returns
+        -------
+        str
+            Readable summary of the *item* structure.
+        """
+        indent = "  " * depth
+        # Leaf: tensor-like (has ``shape`` attribute)
+        if hasattr(item, "shape"):
+            return f"{indent}tensor(shape={tuple(item.shape)})"
+        # Nested container (list/tuple)
+        if isinstance(item, (list, tuple)):
+            container_type = "list" if isinstance(item, list) else "tuple"
+            if len(item) == 0:
+                return f"{indent}{container_type}[]"
+            # Recurse into children
+            children_repr = [self._summarize(sub, depth + 1) for sub in item]
+            joined = ",\n".join(children_repr)
+            return f"{indent}{container_type}[\n{joined}\n{indent}]"
+        # Fallback – just convert to string
+        return f"{indent}{str(item)}"
 
+    def __str__(self):
+        out = ""
+        for dims in self.multitensor_system:
+            value = self[dims]
+            summary = self._summarize(value)
+            out += f"dims: {dims}\n{summary}\n"
+        return out
+    
     def __getitem__(self, dims):
         """
         Retrieve the data at a specific 5-dimensional index.

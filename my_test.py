@@ -241,7 +241,7 @@ def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_d
     # Clear weights_list as it's just for dummy data
     initializer.weights_list.clear()
 
-    return (target_capacities, True), (decode_weights, True), (multiposteriors, True)
+    return target_capacities, decode_weights, multiposteriors
 
 def generate_single_tensor_data(system, batch_size=8, channel_dim_fn=16):
     """Generate dummy MultiTensor with a single tensor for testing."""
