@@ -1,0 +1,1 @@
+1. target capacity can be shared across tasks or shared across batches within a task.
