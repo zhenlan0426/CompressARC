@@ -159,4 +159,104 @@ def softmax(dims, x):
         softmax = torch.exp(x-offsets)
         softmax = softmax / torch.sum(softmax, dim=subset, keepdim=True)
         softmaxxes.append(softmax)
-    return torch.cat(softmaxxes, dim=-1) 
+    return torch.cat(softmaxxes, dim=-1)
+
+def share_direction(residual, share_weights, direction):
+    """
+    Apply the multitensor communication layer.
+    Args:
+        residual (MultiTensor[Tensor]): The residual stream.
+        share_weights (Multitensor[list[list[Tensor]]]): Multiresidual projection weights.
+        direction (int): 1 for up, -1 for down.
+    Returns:
+        MultiTensor[Tensor]: The output of the multitensor communication layer.
+    """
+    
+    # Split the multiresidual into two multilinears
+    down_project_weights = multitensor_systems.multify(lambda dims, weights: weights[0])(share_weights)
+    up_project_weights = multitensor_systems.multify(lambda dims, weights: weights[1])(share_weights)
+
+    multitensor_system = residual.multitensor_system
+
+    x = affine(residual, down_project_weights, use_bias=False)  # down-project
+
+    # Define a different communication method depending on which way we're communicating.
+    if direction == 1:  # share up
+        def share(dims, _):
+            lower_xs = []
+            for lower_dims in multitensor_system:  # get information from all lower tensors
+                # check that lower_dims lower than dims in all indices
+                if all([lower_naxes <= naxes for lower_naxes, naxes in zip(lower_dims, dims)]):
+                    lower_x = x[lower_dims]
+                    # unsqueeze all the dimensions of lower_x until it's the same rank as x
+                    for dim, (lower_naxes, naxes) in enumerate(zip(lower_dims, dims)):
+                        if lower_naxes < naxes:
+                            axis = sum(dims[:dim]) + 1
+                            lower_x = torch.unsqueeze(lower_x, axis)
+                    lower_xs.append(lower_x)
+            return sum(lower_xs)
+    else:  # share down
+        def share(dims, _):
+            higher_xs = []
+            for higher_dims in multitensor_system:  # get information from all higher tensors
+                # check that higher_dims higher than dims in all indices
+                if all([higher_naxes >= naxes for higher_naxes, naxes in zip(higher_dims, dims)]):
+                    higher_x = x[higher_dims]
+                    # aggregate all the dimensions of higher_x until it's the same rank as x
+                    for dim, (higher_naxes, naxes) in reversed(list(enumerate(zip(higher_dims, dims)))):
+                        if higher_naxes > naxes:
+                            axis = sum(higher_dims[:dim]) + 1
+                            # only average over non-masked elements (top left corner)
+                            if (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
+                                # expand/contract masks to make the dims the same as higher_x
+                                masks = x.multitensor_system.task.masks # (example, x, y, in/out)
+                                masks = 1-(1-masks[...,0])*(1-masks[...,1]) # 1 if either in or out is 1, (example, x, y)
+                                for i in range(sum(higher_dims[1:3])):  # insert color and direction dims
+                                    masks = masks[:,None,...]
+                                if dims[4] == 0:  # remove y dim
+                                    masks = masks[...,0]
+                                masks = masks[...,None]  # add channel dim
+                                masks = masks.unsqueeze(0)  # add batch dim
+                                higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
+                            elif (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
+                                # expand/contract masks to make the dims the same as higher_x
+                                masks = x.multitensor_system.task.masks
+                                masks = 1-(1-masks[...,0])*(1-masks[...,1])
+                                for i in range(sum(higher_dims[1:3])):  # insert color and direction dims
+                                    masks = masks[:,None,...]
+                                if higher_dims[3] == 0:  # remove x dim
+                                    masks = masks[...,0,:]
+                                masks = masks[...,None]  # add channel dim
+                                masks = masks.unsqueeze(0)  # add batch dim
+                                higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
+                            else:
+                                higher_x = torch.mean(higher_x, dim=axis)
+                    higher_xs.append(higher_x)
+            return sum(higher_xs)
+    x = multitensor_systems.multify(share)(x)  # perform the cross-tensor communication
+    x = normalize(x)  # post-norm
+    x = affine(x, up_project_weights, use_bias=False)  # up-project
+    residual = multitensor_systems.multify(lambda dims, x, y: x+y)(residual, x)  # add residual
+    return residual
+
+def share_up(residual, share_up_weights):
+    """
+    Apply the multitensor communication layer, upwards.
+    Args:
+        residual (MultiTensor[Tensor]): The residual stream.
+        share_up_weights (Multitensor[list[list[Tensor]]]): Multiresidual projection weights.
+    Returns:
+        MultiTensor[Tensor]: The output of the multitensor communication layer.
+    """
+    return share_direction(residual, share_up_weights, 1)
+
+def share_down(residual, share_down_weights):
+    """
+    Apply the multitensor communication layer, downwards.
+    Args:
+        residual (MultiTensor[Tensor]): The residual stream.
+        share_down_weights (Multitensor[list[list[Tensor]]]): Multiresidual projection weights.
+    Returns:
+        MultiTensor[Tensor]: The output of the multitensor communication layer.
+    """
+    return share_direction(residual, share_down_weights, -1)

@@ -262,37 +262,58 @@ def generate_softmax_data(system, batch_size=8, channel_dim=2, batch_weights=Tru
     residual_weights_mt = initializer.initialize_multiresidual(channel_dim, output_scaling_fn)
     return ((x, True), (residual_weights_mt, batch_weights))
 
+def generate_share_data(system, batch_size=8, batch_weights=True):
+    """Generate dummy MultiTensor data for testing share_up/share_down functions."""
+    channel_dim_fn = lambda dims: 16 if dims[2] == 0 else 8
+    initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=batch_weights)
+    
+    # Create residual stream - this is the input
+    residual = initializer.initialize_multisingle_tensor(channel_dim_fn)
+    
+    # Create share weights - these are multiresidual weights with down and up projections
+    share_weights = initializer.initialize_multiresidual(16, 16)  # share_up_dim = 16
+    
+    return ((residual, True), (share_weights, batch_weights))
+
+def generate_share_data_with_task(task_num, batch_size=8, batch_weights=True):
+    """Generate data with a specific task for testing mask conditions."""
+    import preprocessing
+    tasks = preprocessing.preprocess_tasks('training', [task_num])
+    task = tasks[0]
+    system = task.multitensor_system
+    return generate_share_data(system, batch_size, batch_weights), task
+
 LAYER_TEST_REGISTRY = {
-    # "normalize": {
-    #     "ref": layers.normalize,
-    #     "batched": layers_batch.normalize,
-    #     "generate": lambda system, bs=8: generate_single_tensor_data(system, batch_size=bs, channel_dim_fn=16),
-    #     "kwargs": {},
-    # },
-    # "affine_batched_weights": {
-    #     "ref": layers.affine,
-    #     "batched": layers_batch.affine,
-    #     "generate": partial(generate_affine_data, batch_weights=True),
-    #     "kwargs": {"use_bias": True},
-    # },
-    # "affine_batched_weights_no_bias": {
-    #     "ref": layers.affine,
-    #     "batched": layers_batch.affine,
-    #     "generate": partial(generate_affine_data, batch_weights=True),
-    #     "kwargs": {"use_bias": False},
-    # },    
-    # "affine_shared_weights": {
-    #     "ref": layers.affine,
-    #     "batched": layers_batch.affine,
-    #     "generate": partial(generate_affine_data, batch_weights=False),
-    #     "kwargs": {"use_bias": True},
-    # },
-    # "affine_shared_weights_no_bias": {
-    #     "ref": layers.affine,
-    #     "batched": layers_batch.affine,
-    #     "generate": partial(generate_affine_data, batch_weights=False),
-    #     "kwargs": {"use_bias": False},
-    # },
+    "normalize": {
+        "ref": layers.normalize,
+        "batched": layers_batch.normalize,
+        "generate": lambda system, bs=8: generate_single_tensor_data(system, batch_size=bs, channel_dim_fn=16),
+        "kwargs": {},
+    },
+    "affine_batched_weights": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": partial(generate_affine_data, batch_weights=True),
+        "kwargs": {"use_bias": True},
+    },
+    "affine_batched_weights_no_bias": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": partial(generate_affine_data, batch_weights=True),
+        "kwargs": {"use_bias": False},
+    },    
+    "affine_shared_weights": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": partial(generate_affine_data, batch_weights=False),
+        "kwargs": {"use_bias": True},
+    },
+    "affine_shared_weights_no_bias": {
+        "ref": layers.affine,
+        "batched": layers_batch.affine,
+        "generate": partial(generate_affine_data, batch_weights=False),
+        "kwargs": {"use_bias": False},
+    },
     "softmax_batched_weights": {
         "ref": layers.softmax,
         "batched": layers_batch.softmax,
@@ -305,12 +326,78 @@ LAYER_TEST_REGISTRY = {
         "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=False),
         "kwargs": {"use_bias": False},
     },
+    "share_up_batched_weights_mask_true": {
+        "ref": layers.share_up,
+        "batched": layers_batch.share_up,
+        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, True)[0],  # Task 0 has mask condition True
+        "kwargs": {},
+    },
+    "share_up_shared_weights_mask_true": {
+        "ref": layers.share_up,
+        "batched": layers_batch.share_up,
+        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, False)[0],  # Task 0 has mask condition True
+        "kwargs": {},
+    },
+    "share_up_batched_weights_mask_false": {
+        "ref": layers.share_up,
+        "batched": layers_batch.share_up,
+        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, True)[0],  # Task 21 has mask condition False
+        "kwargs": {},
+    },
+    "share_up_shared_weights_mask_false": {
+        "ref": layers.share_up,
+        "batched": layers_batch.share_up,
+        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, False)[0],  # Task 21 has mask condition False
+        "kwargs": {},
+    },
+    "share_down_batched_weights_mask_true": {
+        "ref": layers.share_down,
+        "batched": layers_batch.share_down,
+        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, True)[0],  # Task 0 has mask condition True
+        "kwargs": {},
+    },
+    "share_down_shared_weights_mask_true": {
+        "ref": layers.share_down,
+        "batched": layers_batch.share_down,
+        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, False)[0],  # Task 0 has mask condition True
+        "kwargs": {},
+    },
+    "share_down_batched_weights_mask_false": {
+        "ref": layers.share_down,
+        "batched": layers_batch.share_down,
+        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, True)[0],  # Task 21 has mask condition False
+        "kwargs": {},
+    },
+    "share_down_shared_weights_mask_false": {
+        "ref": layers.share_down,
+        "batched": layers_batch.share_down,
+        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, False)[0],  # Task 21 has mask condition False
+        "kwargs": {},
+    },
 }
 
 if __name__ == "__main__":
-    dummy_system = mtsys.MultiTensorSystem(3, 4, 7, 7, None)
-
+    # Use proper tasks instead of dummy system to test mask conditions
+    # import preprocessing
+    
+    # print("Testing with Task 0 (mask condition True)...")
+    # task_0_data, task_0 = generate_share_data_with_task(0)
+    # print(f"Task 0: in_out_same_size={task_0.in_out_same_size}, all_out_same_size={task_0.all_out_same_size}, condition={task_0.in_out_same_size or task_0.all_out_same_size}")
+    
+    # print("\nTesting with Task 21 (mask condition False)...")  
+    # task_21_data, task_21 = generate_share_data_with_task(21)
+    # print(f"Task 21: in_out_same_size={task_21.in_out_same_size}, all_out_same_size={task_21.all_out_same_size}, condition={task_21.in_out_same_size or task_21.all_out_same_size}")
+    
     for name, info in LAYER_TEST_REGISTRY.items():
-        generate = info['generate']
-        batched_args = generate(dummy_system)
-        meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
+        if name.startswith('share'):
+            # For share tests, we need to use the appropriate task system
+            task_num = 0 if 'mask_true' in name else 21
+            # Generate fresh data for each test to avoid state issues
+            batched_args, task = generate_share_data_with_task(task_num, batch_size=8, batch_weights='batched_weights' in name)
+            meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
+        else:
+            # For other tests, use dummy system as before
+            dummy_system = mtsys.MultiTensorSystem(3, 4, 7, 7, None)
+            generate = info['generate']
+            batched_args = generate(dummy_system)
+            meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
