@@ -275,19 +275,11 @@ def generate_share_data(system, batch_size=8, batch_weights=True):
     
     return ((residual, True), (share_weights, batch_weights))
 
-def generate_share_data_with_task(task_num, batch_size=8, batch_weights=True):
-    """Generate data with a specific task for testing mask conditions."""
-    import preprocessing
-    tasks = preprocessing.preprocess_tasks('training', [task_num])
-    task = tasks[0]
-    system = task.multitensor_system
-    return generate_share_data(system, batch_size, batch_weights), task
-
 LAYER_TEST_REGISTRY = {
     "normalize": {
         "ref": layers.normalize,
         "batched": layers_batch.normalize,
-        "generate": lambda system, bs=8: generate_single_tensor_data(system, batch_size=bs, channel_dim_fn=16),
+        "generate": generate_single_tensor_data,
         "kwargs": {},
     },
     "affine_batched_weights": {
@@ -326,78 +318,49 @@ LAYER_TEST_REGISTRY = {
         "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=False),
         "kwargs": {"use_bias": False},
     },
-    "share_up_batched_weights_mask_true": {
+    "share_up_mask_true": {
         "ref": layers.share_up,
         "batched": layers_batch.share_up,
-        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, True)[0],  # Task 0 has mask condition True
+        "generate": partial(generate_share_data, batch_weights=True),
         "kwargs": {},
     },
-    "share_up_shared_weights_mask_true": {
+    "share_up_mask_false": {
         "ref": layers.share_up,
         "batched": layers_batch.share_up,
-        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, False)[0],  # Task 0 has mask condition True
+        "generate": partial(generate_share_data, batch_weights=True),
         "kwargs": {},
     },
-    "share_up_batched_weights_mask_false": {
-        "ref": layers.share_up,
-        "batched": layers_batch.share_up,
-        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, True)[0],  # Task 21 has mask condition False
-        "kwargs": {},
-    },
-    "share_up_shared_weights_mask_false": {
-        "ref": layers.share_up,
-        "batched": layers_batch.share_up,
-        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, False)[0],  # Task 21 has mask condition False
-        "kwargs": {},
-    },
-    "share_down_batched_weights_mask_true": {
+    "share_down_mask_true": {
         "ref": layers.share_down,
         "batched": layers_batch.share_down,
-        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, True)[0],  # Task 0 has mask condition True
+        "generate": partial(generate_share_data, batch_weights=True),
         "kwargs": {},
     },
-    "share_down_shared_weights_mask_true": {
+    "share_down_mask_false": {
         "ref": layers.share_down,
         "batched": layers_batch.share_down,
-        "generate": lambda system, bs=8: generate_share_data_with_task(0, bs, False)[0],  # Task 0 has mask condition True
-        "kwargs": {},
-    },
-    "share_down_batched_weights_mask_false": {
-        "ref": layers.share_down,
-        "batched": layers_batch.share_down,
-        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, True)[0],  # Task 21 has mask condition False
-        "kwargs": {},
-    },
-    "share_down_shared_weights_mask_false": {
-        "ref": layers.share_down,
-        "batched": layers_batch.share_down,
-        "generate": lambda system, bs=8: generate_share_data_with_task(21, bs, False)[0],  # Task 21 has mask condition False
+        "generate": partial(generate_share_data, batch_weights=True),
         "kwargs": {},
     },
 }
 
 if __name__ == "__main__":
     # Use proper tasks instead of dummy system to test mask conditions
-    # import preprocessing
-    
-    # print("Testing with Task 0 (mask condition True)...")
-    # task_0_data, task_0 = generate_share_data_with_task(0)
-    # print(f"Task 0: in_out_same_size={task_0.in_out_same_size}, all_out_same_size={task_0.all_out_same_size}, condition={task_0.in_out_same_size or task_0.all_out_same_size}")
-    
-    # print("\nTesting with Task 21 (mask condition False)...")  
-    # task_21_data, task_21 = generate_share_data_with_task(21)
-    # print(f"Task 21: in_out_same_size={task_21.in_out_same_size}, all_out_same_size={task_21.all_out_same_size}, condition={task_21.in_out_same_size or task_21.all_out_same_size}")
-    
+    import preprocessing
+    task0 = preprocessing.preprocess_tasks('training', [0])[0]
+    task21 = preprocessing.preprocess_tasks('training', [21])[0]
+    system0 = task0.multitensor_system
+    system21 = task21.multitensor_system
+    print(f"Task 0: in_out_same_size={task0.in_out_same_size}, all_out_same_size={task0.all_out_same_size}, condition={task0.in_out_same_size or task0.all_out_same_size}")
+    print(f"system 0 has shape: {system0.shape([1, 1, 1, 1, 1])}")
+    print(f"Task 21: in_out_same_size={task21.in_out_same_size}, all_out_same_size={task21.all_out_same_size}, condition={task21.in_out_same_size or task21.all_out_same_size}")
+    print(f"system 21 has shape: {system21.shape([1, 1, 1, 1, 1])}")
+
     for name, info in LAYER_TEST_REGISTRY.items():
-        if name.startswith('share'):
-            # For share tests, we need to use the appropriate task system
-            task_num = 0 if 'mask_true' in name else 21
-            # Generate fresh data for each test to avoid state issues
-            batched_args, task = generate_share_data_with_task(task_num, batch_size=8, batch_weights='batched_weights' in name)
-            meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
+        if name.startswith('share') and 'mask_false' in name:
+            system = system21
         else:
-            # For other tests, use dummy system as before
-            dummy_system = mtsys.MultiTensorSystem(3, 4, 7, 7, None)
-            generate = info['generate']
-            batched_args = generate(dummy_system)
-            meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
+            system = system0
+        generate = info['generate']
+        batched_args = generate(system)
+        meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
