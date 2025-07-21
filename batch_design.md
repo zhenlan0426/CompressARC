@@ -81,5 +81,9 @@ Implement in phases, starting with minimal changes for unbatched weights (shared
    - Edge cases: Tasks with varying n_examples; masks with uncertain grid sizes; large batch_size for GPU limits.
    - Monitor: Ensure no unintended reductions over batch; check KL/dimensionality excludes batch.
 
+5. **optimal batch_size**:
+   - (batch_size, iterations run), e.g., (1,8), (2,4), (4,2), (8,1) over all layers and all tasks.
+   - walltime vs model performance, want best performance with a given walltime budget.
+   - mapping from task dim -> optimal batch size (best performance given walltime budget).
 This plan ensures compatibility, minimizes changes, and achieves the goals. If valid_dims.md details are needed for precise dim handling, fetch via tools. Next steps would involve code edits based on this plan.
 

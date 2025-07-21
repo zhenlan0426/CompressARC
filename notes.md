@@ -11,7 +11,12 @@ better to not have special treatment?
 10. add "batch" as in multiple starting points.
    - share f or separate f for each batch - pre-train with shared f, then finetune with batched f?
    - first run batch and select top k, then run more iterations on top k, discarding the rest?
-
+11. **optimal batch_size**:
+   - (batch_size, iterations run), e.g., (1,8), (2,4), (4,2), (8,1) over all layers and all tasks.
+   - walltime vs model performance, want best performance with a given walltime budget.
+   - mapping from task dim -> optimal batch size (best performance given walltime budget).
+12. Test-time-training (TTT) is naively parallelizable as weights not shared across tasks.
+    
 does not work:
 3. multitensor system is conceptually elegant, but not efficient for computation. Reimplement with a single flattened tensor?
    - share up / down, pick and choose from flattened tensor to add. share down needs to be normalized by size of the tensor. another way to think of this is sparse matrix multiplication.
