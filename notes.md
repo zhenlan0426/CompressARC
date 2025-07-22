@@ -15,6 +15,7 @@ better to not have special treatment?
    - (batch_size, iterations run), e.g., (1,8), (2,4), (4,2), (8,1) over all layers and all tasks.
    - walltime vs model performance, want best performance with a given walltime budget.
    - mapping from task dim -> optimal batch size (best performance given walltime budget).
+   - **multi-start optimization and batch size implmentation can be separated**, e.g., I can have 8 starting points and batch size of 2 forward and backward pass (repeat 4 times in loop). and this can be done at layer level, e.g. different layers have different batch size while all have same number of starting points.
 12. Test-time-training (TTT) is naively parallelizable as weights not shared across tasks.
     
 does not work:

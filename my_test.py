@@ -227,7 +227,10 @@ def meta_tester(
     
 
 ################################################################################
-# registry                                                          
+# registry
+# generate functions needs to return a tuple of (batched_args, kwargs)
+# batched_args is a tuple of (MultiTensor, bool: is MultiTensor has a leading batch dimension), every MultiTensor is assumed to require grad!!
+# kwargs is additional kwargs that needs to be generated but does not require grad
 ################################################################################
 
 def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_dim_fn=16):
@@ -239,12 +242,12 @@ def generate_decode_latents_data(system, batch_size=8, decoding_dim=4, channel_d
     decode_weights = initializer.initialize_multilinear([decoding_dim, channel_dim_fn])
     multiposteriors = initializer.initialize_multiposterior(decoding_dim)
 
-    return target_capacities, decode_weights, multiposteriors
+    return (target_capacities, decode_weights, multiposteriors), {}
 
 def generate_single_tensor_data(system, batch_size=8, channel_dim_fn=16):
     """Generate dummy MultiTensor with a single tensor for testing."""
     initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=True)
-    return ((initializer.initialize_multisingle_tensor(16), True),)
+    return ((initializer.initialize_multisingle_tensor(16), True),), {}
 
 def generate_affine_data(system, batch_size=8, batch_weights=True):
     in_channels = 16
@@ -253,14 +256,14 @@ def generate_affine_data(system, batch_size=8, batch_weights=True):
     initializer = initializers_batch.Initializer(system, channel_dim_fn, batch_size=batch_size, batch_weights=batch_weights)
     x = initializer.initialize_multisingle_tensor(16)
     weight = initializer.initialize_multilinear([in_channels, out_channels])
-    return (x, True), (weight, batch_weights)
+    return ((x, True), (weight, batch_weights)), {}
 
 def generate_softmax_data(system, batch_size=8, channel_dim=2, batch_weights=True):
     output_scaling_fn = lambda dims: channel_dim * (2 ** (dims[1] + dims[2] + dims[3] + dims[4]) - 1)
     initializer = initializers_batch.Initializer(system, channel_dim, batch_size=batch_size, batch_weights=batch_weights)
     x = initializer.initialize_multisingle_tensor(channel_dim)
     residual_weights_mt = initializer.initialize_multiresidual(channel_dim, output_scaling_fn)
-    return ((x, True), (residual_weights_mt, batch_weights))
+    return ((x, True), (residual_weights_mt, batch_weights)), {}
 
 def generate_share_data(system, batch_size=8, batch_weights=True):
     """Generate dummy MultiTensor data for testing share_up/share_down functions."""
@@ -273,7 +276,15 @@ def generate_share_data(system, batch_size=8, batch_weights=True):
     # Create share weights - these are multiresidual weights with down and up projections
     share_weights = initializer.initialize_multiresidual(16, 16)  # share_up_dim = 16
     
-    return ((residual, True), (share_weights, batch_weights))
+    return ((residual, True), (share_weights, batch_weights)), {}
+
+def generate_directional_data(system, batch_size=8, channel_dim=16, batch_weights=True):
+    initializer = initializers_batch.Initializer(system, channel_dim, batch_size=batch_size, batch_weights=batch_weights)
+    x = initializer.initialize_multisingle_tensor(channel_dim)
+    residual_weights = initializer.initialize_multiresidual(channel_dim, channel_dim)
+    masks = system.task.masks
+    masks.requires_grad_(False)
+    return ((x, True), (residual_weights, batch_weights)), {"masks": masks}
 
 LAYER_TEST_REGISTRY = {
     "normalize": {
@@ -342,6 +353,30 @@ LAYER_TEST_REGISTRY = {
         "generate": partial(generate_share_data, batch_weights=True),
         "kwargs": {},
     },
+    "cummax_mask_true": {
+        "ref": layers.cummax,
+        "batched": layers_batch.cummax,
+        "generate": generate_directional_data,
+        "kwargs": {"use_bias": False},
+    },
+    "cummax_mask_false": {
+        "ref": layers.cummax,
+        "batched": layers_batch.cummax,
+        "generate": generate_directional_data,
+        "kwargs": {"use_bias": False},
+    },
+    "shift_mask_true": {
+        "ref": layers.shift,
+        "batched": layers_batch.shift,
+        "generate": generate_directional_data,
+        "kwargs": {"use_bias": False},
+    },
+    "shift_mask_false": {
+        "ref": layers.shift,
+        "batched": layers_batch.shift,
+        "generate": generate_directional_data,
+        "kwargs": {"use_bias": False},
+    },
 }
 
 if __name__ == "__main__":
@@ -357,10 +392,11 @@ if __name__ == "__main__":
     print(f"system 21 has shape: {system21.shape([1, 1, 1, 1, 1])}")
 
     for name, info in LAYER_TEST_REGISTRY.items():
-        if name.startswith('share') and 'mask_false' in name:
-            system = system21
+        if 'mask_false' in name:
+            system = system21 # larger system that is not all same shape
         else:
             system = system0
         generate = info['generate']
-        batched_args = generate(system)
+        batched_args, kwargs = generate(system)
+        info['kwargs'].update(kwargs)
         meta_tester(name, info['ref'], info['batched'], batched_args, **info['kwargs'])
