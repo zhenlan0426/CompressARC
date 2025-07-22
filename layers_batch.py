@@ -466,3 +466,86 @@ shift = multitensor_systems.multify(  # apply decorators
         make_directional_layer(
         shift_, diagonal_shift_
         ))))
+
+directional_dims = [(i,j,1,k,l) for i in range(2) for j in range(2) for k in range(2) for l in range(2)]
+# @multitensor_systems.multify
+# @only_do_for_certain_shapes(*directional_dims)
+# def direction_share(dims, x, weights, pre_norm=True, use_bias=False):
+#     """
+#     Apply the directional communication layer.
+#     Args:
+#         dims (list[int]): Ignore this argument. It will be filled in by the multify decorator.
+#         x (MultiTensor[Tensor]): The input to the directional communication layer.
+#         weights (MultiTensor[list[list[list[Tensor]]]]): A multitensor full of linear layer weights
+#                 for every pair of directions.
+#     Returns:
+#         MultiTensor[Tensor]: The output of the directional communication layer.
+#     """
+#     # Optionally normalize the input
+#     z = normalize(x) if pre_norm else x
+#     x_new = x.clone()
+#     n_directions = dims[3] + dims[4]
+#     direction_dim = -2 - n_directions
+
+#     # Precomputed coefficients for the directional shift.
+#     coefficients = [1, 0.2, 0.4, 0.2, 1, 0.2, 0.4, 0.2]
+
+#     # Loop over all pairs of directions.
+#     for d1 in range(8):
+#         for d2 in range(8):
+#             # Determine the appropriate coefficient.
+#             c = coefficients[(d2 - d1) % 8]
+#             # Apply the affine transformation for this pair and accumulate.
+#             update = c * affine(z.narrow(direction_dim, d2, 1), weights[d1][d2], use_bias=use_bias)
+#             x_new.narrow(direction_dim, d1, 1).add_(update)
+
+#     # Reassemble the tensor along the original direction dimension.
+#     return x_new
+
+@multitensor_systems.multify
+@only_do_for_certain_shapes(*directional_dims)
+def direction_share(dims, x, weights, pre_norm=True):
+    """
+    Apply the directional communication layer.
+    Args:
+        dims (list[int]): Ignore this argument. It will be filled in by the multify decorator.
+        x (MultiTensor[Tensor]): The input to the directional communication layer.
+        weights (MultiTensor[list[list[list[Tensor]]]]): A multitensor full of linear layer weights
+                for every pair of directions.
+    Returns:
+        MultiTensor[Tensor]: The output of the directional communication layer.
+    """
+    # Optionally normalize the input
+    z = normalize(x) if pre_norm else x
+    num_spatial = dims[3] + dims[4]
+    direction_dim = -2 - num_spatial
+    # Move direction dim to -2 for vectorized operations
+    x_stacked = x.movedim(direction_dim, -2)
+    z_stacked = z.movedim(direction_dim, -2)
+
+    # Create coefficients tensor (8x8, based on circular differences)
+    coefficients = [1, 0.2, 0.4, 0.2, 1, 0.2, 0.4, 0.2]
+    c_tensor = torch.tensor(
+        [coefficients[(j - i) % 8] for i in range(8) for j in range(8)],
+        device=x.device,
+        dtype=x.dtype,
+    ).view(8, 8)
+
+    # Stack weights into tensors for vectorized matmul (8 d1, 8 d2, in, out)
+    w_list = [[weights[d1][d2][0] for d2 in range(8)] for d1 in range(8)] # pick out weight and ignore bias
+    w_stacked = torch.stack([torch.stack(d2_weights, dim=0) for d2_weights in w_list], dim=0) 
+    k = w_stacked.ndim
+    # Incorporate coefficients into weights
+    while c_tensor.ndim < k:
+        c_tensor = c_tensor[..., None]
+    w_stacked = w_stacked * c_tensor
+    
+    # Vectorized matmul: sum_d2 c[d1,d2] * (z_d2 @ w[d1,d2])
+    if k == 4: # unbatched weights, (8, 8, d_in, d_out)
+        addition = torch.einsum("... j m, i j m n -> ... i n", z_stacked, w_stacked)
+    else: # batched, (8, 8, b, d_in, d_out)
+        addition = torch.einsum("b ... j m, i j b m n -> b ... i n", z_stacked, w_stacked)
+
+    # Add to original x and move direction dim back
+    output_stacked = x_stacked + addition
+    return output_stacked.movedim(-2, direction_dim)

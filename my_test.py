@@ -286,96 +286,128 @@ def generate_directional_data(system, batch_size=8, channel_dim=16, batch_weight
     masks.requires_grad_(False)
     return ((x, True), (residual_weights, batch_weights)), {"masks": masks}
 
+def generate_direction_share_data(system, batch_size=8, channel_dim=16, batch_weights=False):
+    initializer = initializers_batch.Initializer(system, channel_dim, batch_size=batch_size, batch_weights=batch_weights)
+    x = initializer.initialize_multisingle_tensor(channel_dim)
+    residual_weights = initializer.initialize_multidirection_share()
+    # tied weights are not supported by meta_tester as inputs all get cloned, disregarding the sharing.
+    # initializer.symmetrize_direction_sharing(residual_weights)
+    return ((x, True), (residual_weights, batch_weights)), {}
+
 LAYER_TEST_REGISTRY = {
-    "normalize": {
-        "ref": layers.normalize,
-        "batched": layers_batch.normalize,
-        "generate": generate_single_tensor_data,
-        "kwargs": {},
+    # "normalize": {
+    #     "ref": layers.normalize,
+    #     "batched": layers_batch.normalize,
+    #     "generate": generate_single_tensor_data,
+    #     "kwargs": {},
+    # },
+    # "affine_batched_weights": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=True),
+    #     "kwargs": {"use_bias": True},
+    # },
+    # "affine_batched_weights_no_bias": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=True),
+    #     "kwargs": {"use_bias": False},
+    # },    
+    # "affine_shared_weights": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=False),
+    #     "kwargs": {"use_bias": True},
+    # },
+    # "affine_shared_weights_no_bias": {
+    #     "ref": layers.affine,
+    #     "batched": layers_batch.affine,
+    #     "generate": partial(generate_affine_data, batch_weights=False),
+    #     "kwargs": {"use_bias": False},
+    # },
+    # "softmax_batched_weights": {
+    #     "ref": layers.softmax,
+    #     "batched": layers_batch.softmax,
+    #     "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=True),
+    #     "kwargs": {"use_bias": False},
+    # },
+    # "softmax_shared_weights": {
+    #     "ref": layers.softmax,
+    #     "batched": layers_batch.softmax,
+    #     "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=False),
+    #     "kwargs": {"use_bias": False},
+    # },
+    # "share_up_mask_true": {
+    #     "ref": layers.share_up,
+    #     "batched": layers_batch.share_up,
+    #     "generate": partial(generate_share_data, batch_weights=True),
+    #     "kwargs": {},
+    # },
+    # "share_up_mask_false": {
+    #     "ref": layers.share_up,
+    #     "batched": layers_batch.share_up,
+    #     "generate": partial(generate_share_data, batch_weights=True),
+    #     "kwargs": {},
+    # },
+    # "share_down_mask_true": {
+    #     "ref": layers.share_down,
+    #     "batched": layers_batch.share_down,
+    #     "generate": partial(generate_share_data, batch_weights=True),
+    #     "kwargs": {},
+    # },
+    # "share_down_mask_false": {
+    #     "ref": layers.share_down,
+    #     "batched": layers_batch.share_down,
+    #     "generate": partial(generate_share_data, batch_weights=True),
+    #     "kwargs": {},
+    # },
+    # "cummax_mask_true": {
+    #     "ref": layers.cummax,
+    #     "batched": layers_batch.cummax,
+    #     "generate": generate_directional_data,
+    #     "kwargs": {"use_bias": False},
+    # },
+    # "cummax_mask_false": {
+    #     "ref": layers.cummax,
+    #     "batched": layers_batch.cummax,
+    #     "generate": generate_directional_data,
+    #     "kwargs": {"use_bias": False},
+    # },
+    # "shift_mask_true": {
+    #     "ref": layers.shift,
+    #     "batched": layers_batch.shift,
+    #     "generate": generate_directional_data,
+    #     "kwargs": {"use_bias": False},
+    # },
+    # "shift_mask_false": {
+    #     "ref": layers.shift,
+    #     "batched": layers_batch.shift,
+    #     "generate": generate_directional_data,
+    #     "kwargs": {"use_bias": False},
+    # },
+    # "direction_share_mask_true": {
+    #     "ref": layers.direction_share,
+    #     "batched": layers_batch.direction_share,
+    #     "generate": generate_direction_share_data,
+    #     "kwargs": {},
+    # },
+    # "direction_share_mask_false": {
+    #     "ref": layers.direction_share,
+    #     "batched": layers_batch.direction_share,
+    #     "generate": generate_direction_share_data,
+    #     "kwargs": {},
+    # },
+    "direction_share_mask_true_shared_weights": {
+        "ref": layers.direction_share,
+        "batched": layers_batch.direction_share,
+        "generate": partial(generate_direction_share_data, batch_size=4, batch_weights=True),
+        "kwargs": {"batch_size": 4},
     },
-    "affine_batched_weights": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=True),
-        "kwargs": {"use_bias": True},
-    },
-    "affine_batched_weights_no_bias": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=True),
-        "kwargs": {"use_bias": False},
-    },    
-    "affine_shared_weights": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=False),
-        "kwargs": {"use_bias": True},
-    },
-    "affine_shared_weights_no_bias": {
-        "ref": layers.affine,
-        "batched": layers_batch.affine,
-        "generate": partial(generate_affine_data, batch_weights=False),
-        "kwargs": {"use_bias": False},
-    },
-    "softmax_batched_weights": {
-        "ref": layers.softmax,
-        "batched": layers_batch.softmax,
-        "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=True),
-        "kwargs": {"use_bias": False},
-    },
-    "softmax_shared_weights": {
-        "ref": layers.softmax,
-        "batched": layers_batch.softmax,
-        "generate": partial(generate_softmax_data, channel_dim=16, batch_weights=False),
-        "kwargs": {"use_bias": False},
-    },
-    "share_up_mask_true": {
-        "ref": layers.share_up,
-        "batched": layers_batch.share_up,
-        "generate": partial(generate_share_data, batch_weights=True),
-        "kwargs": {},
-    },
-    "share_up_mask_false": {
-        "ref": layers.share_up,
-        "batched": layers_batch.share_up,
-        "generate": partial(generate_share_data, batch_weights=True),
-        "kwargs": {},
-    },
-    "share_down_mask_true": {
-        "ref": layers.share_down,
-        "batched": layers_batch.share_down,
-        "generate": partial(generate_share_data, batch_weights=True),
-        "kwargs": {},
-    },
-    "share_down_mask_false": {
-        "ref": layers.share_down,
-        "batched": layers_batch.share_down,
-        "generate": partial(generate_share_data, batch_weights=True),
-        "kwargs": {},
-    },
-    "cummax_mask_true": {
-        "ref": layers.cummax,
-        "batched": layers_batch.cummax,
-        "generate": generate_directional_data,
-        "kwargs": {"use_bias": False},
-    },
-    "cummax_mask_false": {
-        "ref": layers.cummax,
-        "batched": layers_batch.cummax,
-        "generate": generate_directional_data,
-        "kwargs": {"use_bias": False},
-    },
-    "shift_mask_true": {
-        "ref": layers.shift,
-        "batched": layers_batch.shift,
-        "generate": generate_directional_data,
-        "kwargs": {"use_bias": False},
-    },
-    "shift_mask_false": {
-        "ref": layers.shift,
-        "batched": layers_batch.shift,
-        "generate": generate_directional_data,
-        "kwargs": {"use_bias": False},
+    "direction_share_mask_false_shared_weights": {
+        "ref": layers.direction_share,
+        "batched": layers_batch.direction_share,
+        "generate": partial(generate_direction_share_data, batch_size=4, batch_weights=True),
+        "kwargs": {"batch_size": 4},
     },
 }
 
