@@ -6,11 +6,8 @@ import torch
 import preprocessing
 # Use the batched ARCCompressor implementation which prepends a batch dimension
 import arc_compressor_batch as arc_compressor
-import initializers
-import multitensor_systems
-import layers
-import solution_selection
-import visualization
+import solution_selection_batch as solution_selection
+
 
 
 """
@@ -167,9 +164,9 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
 
     # Performance recording
     train_history_logger.log(train_step,
-                             logits[0],
-                             x_mask[0],
-                             y_mask[0],
+                             logits,
+                             x_mask,
+                             y_mask,
                              KL_amounts,
                              KL_names,
                              total_KL,
@@ -181,8 +178,8 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
 if __name__ == "__main__":
     start_time = time.time()
 
-    task_nums = [0,1,2]
-    split = "training"  # "training", "evaluation, or "test"
+    task_nums = list(range(1000))
+    split = "evaluation"  # "training", "evaluation, or "test"
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
     tasks = preprocessing.preprocess_tasks(split, task_nums)
@@ -190,7 +187,7 @@ if __name__ == "__main__":
     optimizers = []
     train_history_loggers = []
     for task in tasks:
-        model = arc_compressor.ARCCompressor(task)
+        model = arc_compressor.ARCCompressor(task, 4)
         models.append(model)
         optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
         optimizers.append(optimizer)
