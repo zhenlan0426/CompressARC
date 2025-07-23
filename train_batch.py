@@ -4,7 +4,8 @@ import numpy as np
 import torch
 
 import preprocessing
-import arc_compressor
+# Use the batched ARCCompressor implementation which prepends a batch dimension
+import arc_compressor_batch as arc_compressor
 import initializers
 import multitensor_systems
 import layers
@@ -22,16 +23,33 @@ torch.manual_seed(0)
 
 def mask_select_logprobs(mask, length):
     """
-    Figure out the unnormalized log probability of taking each slice given the output mask.
+    Compute the (unnormalised) log-probabilities for selecting every contiguous slice of
+    the specified length, **vectorised over the batch dimension**.
+
+    Args:
+        mask (Tensor): Tensor of shape (B, L) where B is the batch size and L the
+                       maximum possible length. Larger (more positive) entries mean the
+                       corresponding index is *less* likely to be masked out.
+        length (int):  Desired slice length.
+
+    Returns:
+        Tensor: log_partition of shape (B,) – log-partition-function for each batch element.
+        Tensor: logprobs      of shape (B, L-length+1) – unnormalised log-probability for
+                choosing a slice starting at every possible offset.
     """
+
+    # mask: (B, L)
+    B, L = mask.shape
+
     logprobs = []
-    for offset in range(mask.shape[0]-length+1):
-        logprob = -torch.sum(mask[:offset])
-        logprob = logprob + torch.sum(mask[offset:offset+length])
-        logprob = logprob - torch.sum(mask[offset+length:])
-        logprobs.append(logprob)
-    logprobs = torch.stack(logprobs, dim=0)
-    log_partition = torch.logsumexp(logprobs, dim=0)
+    for offset in range(L - length + 1):
+        before_sum = mask[:, :offset].sum(dim=1)                    # (B,)
+        middle_sum = mask[:, offset:offset + length].sum(dim=1)     # (B,)
+        after_sum  = mask[:, offset + length:].sum(dim=1)           # (B,)
+        logprobs.append(-before_sum + middle_sum - after_sum)       # (B,)
+
+    logprobs = torch.stack(logprobs, dim=1)                         # (B, O)
+    log_partition = torch.logsumexp(logprobs, dim=1)                # (B,)
     return log_partition, logprobs
 
 def take_step(task, model, optimizer, train_step, train_history_logger, track_last=False):
@@ -48,7 +66,9 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
 
     optimizer.zero_grad()
     logits, x_mask, y_mask, KL_amounts, KL_names, = model.forward()
-    logits = torch.cat([torch.zeros_like(logits[:,:1,:,:]), logits], dim=1)  # add black color to logits
+    # Shape now: (B, E, C, X, Y, in_out)
+    # Pre-append a zero-logit channel for the black colour along the colour dimension (dim=2)
+    logits = torch.cat([torch.zeros_like(logits[:, :, :1, ...]), logits], dim=2)
 
     # Compute the total KL loss
     total_KL = 0
@@ -72,20 +92,30 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
                 coefficient = 0.01**max(0, 1-train_step/100)
             else:
                 coefficient = 1
-            logits_slice = logits[example_num,:,:,:,in_out_mode]  # color, x, y
-            problem_slice = task.problem[example_num,:,:,in_out_mode]  # x, y
+            logits_slice = logits[:, example_num, :, :, :, in_out_mode]  # (B, C, x, y)
+            problem_slice = task.problem[example_num, :, :, in_out_mode]  # (x, y)
             output_shape = task.shapes[example_num][in_out_mode]
-            x_log_partition, x_logprobs = mask_select_logprobs(coefficient*x_mask[example_num,:,in_out_mode], output_shape[0])
-            y_log_partition, y_logprobs = mask_select_logprobs(coefficient*y_mask[example_num,:,in_out_mode], output_shape[1])
+            x_log_partition, x_logprobs = mask_select_logprobs(
+                coefficient * x_mask[:, example_num, :, in_out_mode],
+                output_shape[0]
+            )  # (B,), (B, O_x)
+            y_log_partition, y_logprobs = mask_select_logprobs(
+                coefficient * y_mask[:, example_num, :, in_out_mode],
+                output_shape[1]
+            )  # (B,), (B, O_y)
             # Account for probability of getting right grid size, if grid size is not known
             if grid_size_uncertain:
                 x_log_partitions = []
                 y_log_partitions = []
-                for length in range(1, x_mask.shape[1]+1):
-                    # this is log sum exp over grid of given length
-                    x_log_partitions.append(mask_select_logprobs(coefficient*x_mask[example_num,:,in_out_mode], length)[0])
-                for length in range(1, y_mask.shape[1]+1):
-                    y_log_partitions.append(mask_select_logprobs(coefficient*y_mask[example_num,:,in_out_mode], length)[0])
+                for length in range(1, x_mask.shape[2] + 1):
+                    # this is log-sum-exp over grids of the given length
+                    x_log_partitions.append(
+                        mask_select_logprobs(coefficient * x_mask[:, example_num, :, in_out_mode], length)[0]
+                    )
+                for length in range(1, y_mask.shape[2] + 1):
+                    y_log_partitions.append(
+                        mask_select_logprobs(coefficient * y_mask[:, example_num, :, in_out_mode], length)[0]
+                    )
                 # this is log sum exp over all possible lengths
                 x_log_partition = torch.logsumexp(torch.stack(x_log_partitions, dim=0), dim=0)
                 y_log_partition = torch.logsumexp(torch.stack(y_log_partitions, dim=0), dim=0)
@@ -93,27 +123,42 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
             # log P(correct colors) = log sum over all possible starts P(grid that starts at x_offset, y_offset) * P(correct colors given grid)
             # log sum exp log P(above) = log sum exp (log P1 + log P2)
             # this two loops calculate log P1 + log P2
-            logprobs = [[] for x_offset in range(x_logprobs.shape[0])]  # x, y
-            for x_offset in range(x_logprobs.shape[0]): # iterate over all possible x with length output_shape[0]
-                for y_offset in range(y_logprobs.shape[0]): # two loops together iterate over all possible grid of size output_shape[0] x output_shape[1]
-                    # x_logprobs[x_offset] - x_log_partition is the log probability of grid length output_shape[0] starting at x_offset, 
-                    # normalized by all possible grids sizes starting at all possible x_offsets
-                    logprob = x_logprobs[x_offset] - x_log_partition + y_logprobs[y_offset] - y_log_partition
-                    logits_crop = logits_slice[:,x_offset:x_offset+output_shape[0],y_offset:y_offset+output_shape[1]]  # c, x, y
-                    target_crop = problem_slice[:output_shape[0],:output_shape[1]]  # x, y
-                    # this is the log probability of the colors being correct, given the grid size
-                    logprob = logprob - torch.nn.functional.cross_entropy(logits_crop[None,...], target_crop[None,...], reduction='sum')
-                    logprobs[x_offset].append(logprob)
-            logprobs = torch.stack([torch.stack(logprobs_, dim=0) for logprobs_ in logprobs], dim=0)  # x, y
+            logprobs = []  # will become (B, O_x, O_y)
+            B = logits_slice.shape[0]
+            for x_offset in range(x_logprobs.shape[1]):  # iterate over possible x-starts
+                logprobs_y = []
+                for y_offset in range(y_logprobs.shape[1]):  # iterate over possible y-starts
+                    # Grid-position prior
+                    logprob = (
+                        x_logprobs[:, x_offset] - x_log_partition +
+                        y_logprobs[:, y_offset] - y_log_partition
+                    )  # (B,)
+
+                    # Extract the corresponding crop
+                    logits_crop = logits_slice[:, :, x_offset:x_offset + output_shape[0], y_offset:y_offset + output_shape[1]]  # (B, C, x', y')
+                    target_crop = problem_slice[:output_shape[0], :output_shape[1]]  # (x', y')
+
+                    # Broadcast target over the batch dimension
+                    target_crop_b = target_crop.unsqueeze(0).expand(B, *target_crop.shape)
+
+                    ce = torch.nn.functional.cross_entropy(logits_crop, target_crop_b, reduction='none')  # (B, x', y')
+                    ce_sum = ce.sum(dim=(1, 2))  # (B,)
+
+                    logprob = logprob - ce_sum  # (B,)
+                    logprobs_y.append(logprob)
+                logprobs_y = torch.stack(logprobs_y, dim=1)  # (B, O_y)
+                logprobs.append(logprobs_y)
+            logprobs = torch.stack(logprobs, dim=1)  # (B, O_x, O_y)
             if grid_size_uncertain:
                 coefficient = 0.1**max(0, 1-train_step/100)
             else:
                 coefficient = 1
-            logprob = torch.logsumexp(coefficient*logprobs, dim=(0,1))/coefficient  # Aggregate for all possible grid sizes
+            logprob = torch.logsumexp(coefficient * logprobs, dim=(1, 2)) / coefficient  # (B,)
+
             if example_num >= task.n_train and in_out_mode == 1:
-                test_reconstruction_error = test_reconstruction_error - logprob
+                test_reconstruction_error = test_reconstruction_error - logprob.sum()
             else:
-                reconstruction_error = reconstruction_error - logprob
+                reconstruction_error = reconstruction_error - logprob.sum()
 
     loss = total_KL + 10*reconstruction_error
     loss.backward()
@@ -122,9 +167,9 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
 
     # Performance recording
     train_history_logger.log(train_step,
-                             logits,
-                             x_mask,
-                             y_mask,
+                             logits[0],
+                             x_mask[0],
+                             y_mask[0],
                              KL_amounts,
                              KL_names,
                              total_KL,

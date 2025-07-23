@@ -146,12 +146,10 @@ class ARCCompressor:
             x = layers.normalize(x)
 
         # Linear Heads
-        print(x[[1, 1, 0, 1, 1]].shape, self.head_weights[0].shape, self.head_weights[1].shape)
         output = (
             layers.affine(x[[1, 1, 0, 1, 1]], self.head_weights, use_bias=False)
             + 100 * self.head_weights[1]
         )
-        print(output.shape)
         x_mask = layers.affine(x[[1, 0, 0, 1, 0]], self.mask_weights, use_bias=True)
         y_mask = layers.affine(x[[1, 0, 0, 0, 1]], self.mask_weights, use_bias=True)
 
