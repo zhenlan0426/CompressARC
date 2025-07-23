@@ -136,8 +136,8 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
 if __name__ == "__main__":
     start_time = time.time()
 
-    task_nums = [0,1,2]
-    split = "training"  # "training", "evaluation, or "test"
+    task_nums = list(range(1000))
+    split = "evaluation"  # "training", "evaluation, or "test"
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
     tasks = preprocessing.preprocess_tasks(split, task_nums)
@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
     # Train the models one by one
     for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
-        n_iterations = 1
+        n_iterations = 512
 
         task_start_time = time.time()
 

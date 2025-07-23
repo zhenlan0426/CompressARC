@@ -518,27 +518,35 @@ def direction_share(dims, x, weights, pre_norm=True, use_bias=False):
     """
     # Optionally normalize the input
     z = normalize(x) if pre_norm else x
+    num_spatial = dims[3] + dims[4]
+    direction_dim = -2 - num_spatial
+    # Move direction dim to -2 for vectorized operations
+    x_stacked = x.movedim(direction_dim, -2)
+    z_stacked = z.movedim(direction_dim, -2)
 
-    n_directions = dims[3] + dims[4]
-    direction_dim = -2 - n_directions
-
-    # Unbind x and z along the direction dimension to avoid repeated slicing.
-    x_list = list(torch.unbind(x, dim=direction_dim))
-    z_list = list(torch.unbind(z, dim=direction_dim))
-
-    # Precomputed coefficients for the directional shift.
+    # Create coefficients tensor (8x8, based on circular differences)
     coefficients = [1, 0.2, 0.4, 0.2, 1, 0.2, 0.4, 0.2]
+    c_tensor = torch.tensor(
+        [coefficients[(j - i) % 8] for i in range(8) for j in range(8)],
+        device=x.device,
+        dtype=x.dtype,
+    ).view(8, 8)
 
-    # Loop over all pairs of directions.
-    for d1 in range(8):
-        for d2 in range(8):
-            # Determine the appropriate coefficient.
-            c = coefficients[(d2 - d1) % 8]
-            # Apply the affine transformation for this pair and accumulate.
-            x_list[d1] = x_list[d1] + c * affine(z_list[d2], weights[d1][d2], use_bias=use_bias)
+    # Stack weights into tensors for vectorized matmul (8 d1, 8 d2, in, out)
+    w_list = [[weights[d1][d2][0] for d2 in range(8)] for d1 in range(8)] # pick out weight and ignore bias
+    w_stacked = torch.stack([torch.stack(d2_weights, dim=0) for d2_weights in w_list], dim=0) 
+    k = w_stacked.ndim
+    # Incorporate coefficients into weights
+    while c_tensor.ndim < k:
+        c_tensor = c_tensor[..., None]
+    w_stacked = w_stacked * c_tensor
+    
+    # Vectorized matmul: sum_d2 c[d1,d2] * (z_d2 @ w[d1,d2])
+    addition = torch.einsum("... j m, i j m n -> ... i n", z_stacked, w_stacked)
 
-    # Reassemble the tensor along the original direction dimension.
-    return torch.stack(x_list, dim=direction_dim)
+    # Add to original x and move direction dim back
+    output_stacked = x_stacked + addition
+    return output_stacked.movedim(-2, direction_dim)
 
 @multitensor_systems.multify
 @add_residual
