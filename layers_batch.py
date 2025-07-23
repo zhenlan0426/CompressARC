@@ -504,7 +504,7 @@ directional_dims = [(i,j,1,k,l) for i in range(2) for j in range(2) for k in ran
 
 @multitensor_systems.multify
 @only_do_for_certain_shapes(*directional_dims)
-def direction_share(dims, x, weights, pre_norm=True):
+def direction_share(dims, x, weights, pre_norm=True, use_bias=False):
     """
     Apply the directional communication layer.
     Args:
@@ -549,3 +549,19 @@ def direction_share(dims, x, weights, pre_norm=True):
     # Add to original x and move direction dim back
     output_stacked = x_stacked + addition
     return output_stacked.movedim(-2, direction_dim)
+
+@multitensor_systems.multify
+@add_residual
+def nonlinear(dims, x):
+    """
+    Apply the nonlinear layer.
+    Args:
+        dims (list[int]): Ignore this argument. It will be filled in by the multify decorator.
+        x (MultiTensor[Tensor]): The input to the nonlinear layer.
+        weights (MultiTensor[list[list[Tensor]]]): Multiresidual projection weights surrounding the nonlinear operations.
+                Implicitly introduced by the add_residual decorator.
+        Other boolean kwargs such as pre_norm, post_norm, use_bias, introduced by the add_residual decorator.
+    Returns:
+        MultiTensor[Tensor]: The output of the nonlinear layer.
+    """
+    return torch.nn.functional.silu(x)

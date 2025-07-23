@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 
-import initializers
-import layers
+import initializers_batch
+import layers_batch as layers
 
 
 np.random.seed(0)
@@ -31,7 +31,7 @@ class ARCCompressor:
     def channel_dim_fn(self, dims):
         return 16 if dims[2] == 0 else 8
 
-    def __init__(self, task):
+    def __init__(self, task, batch_size=8, batch_weights=True):
         """
         Create a model that is tailored to the given task, and initialize all the weights.
         The weights are symmetrized such that swapping the x and y dimension ordering should
@@ -43,7 +43,7 @@ class ARCCompressor:
         self.multitensor_system = task.multitensor_system
 
         # Initialize weights
-        initializer = initializers.Initializer(self.multitensor_system, self.channel_dim_fn)
+        initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, batch_weights)
 
         self.multiposteriors = initializer.initialize_multiposterior(self.decoding_dim)
         self.decode_weights = initializer.initialize_multilinear([self.decoding_dim, self.channel_dim_fn])
@@ -146,10 +146,12 @@ class ARCCompressor:
             x = layers.normalize(x)
 
         # Linear Heads
+        print(x[[1, 1, 0, 1, 1]].shape, self.head_weights[0].shape, self.head_weights[1].shape)
         output = (
             layers.affine(x[[1, 1, 0, 1, 1]], self.head_weights, use_bias=False)
             + 100 * self.head_weights[1]
         )
+        print(output.shape)
         x_mask = layers.affine(x[[1, 0, 0, 1, 0]], self.mask_weights, use_bias=True)
         y_mask = layers.affine(x[[1, 0, 0, 0, 1]], self.mask_weights, use_bias=True)
 

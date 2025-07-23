@@ -66,4 +66,27 @@ class Initializer(initializers.Initializer):
         return multitensor_systems.multify(self.initialize_single_tensor)(
             self.multitensor_system.make_multitensor(default=channel_dim)
         )
+
+    def initialize_head(self):
+        """Batched version of initialize_head that includes a leading batch dimension.
+        This is the same as the base Initializer, only difference being that self.initialize_linear is batched version.
+        """
+        dims = [1, 1, 0, 1, 1]
+
+        # Use the overridden initialize_linear so weight/bias follow the batching setting
+        head_weights = self.initialize_linear(dims, [self.channel_dim_fn(dims), 2])
+
+        # Enforce symmetry w.r.t swapping x and y dimensions on the weight tensor
+        W = head_weights[0]  # shape: (batch, n_in, 2) if batched else (n_in, 2)
+        # Temporarily disable grad so that W_sym is a leaf node, rather than intermediate node (grad will be backproped into W)
+        W.requires_grad = False
+        W_sym = torch.stack([W[..., 0]] * 2, dim=-1)  # Duplicate first output channel
+        head_weights[0] = W_sym
+        head_weights[0].requires_grad = True  # Re-enable gradients
+        if self.batch_weights:
+            # + 100 * self.head_weights[1] in arc_compressor.py
+            head_weights[1] = head_weights[1].view(self.batch_size, 1, 1, 1, 1, 2)
+        # Keep weights_list consistent (weight is the second-to-last element that was appended)
+        self.weights_list[-2] = head_weights[0]
+        return head_weights
         
