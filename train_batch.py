@@ -49,6 +49,17 @@ def mask_select_logprobs(mask, length):
     log_partition = torch.logsumexp(logprobs, dim=1)                # (B,)
     return log_partition, logprobs
 
+def get_optimal_batch_size(task):
+    grid_size = task.n_examples * task.n_colors * task.n_x * task.n_y
+    if grid_size < 5000:
+        return 16
+    elif grid_size < 10000:
+        return 8
+    elif grid_size < 20000:
+        return 4
+    else:
+        return 1
+
 def take_step(task, model, optimizer, train_step, train_history_logger, track_last=False):
     """
     Runs a forward pass of the model on the ARC-AGI task.
@@ -186,8 +197,11 @@ if __name__ == "__main__":
     models = []
     optimizers = []
     train_history_loggers = []
+    iteration_counts = []
     for task in tasks:
-        model = arc_compressor.ARCCompressor(task, 4)
+        batch_size = get_optimal_batch_size(task)
+        iteration_counts.append(512 // batch_size)
+        model = arc_compressor.ARCCompressor(task, batch_size)
         models.append(model)
         optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
         optimizers.append(optimizer)
@@ -202,7 +216,7 @@ if __name__ == "__main__":
 
     # Train the models one by one
     for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
-        n_iterations = 1
+        n_iterations = iteration_counts[i]
 
         task_start_time = time.time()
 
@@ -217,6 +231,7 @@ if __name__ == "__main__":
         stats = train_history_logger.compute_stats()
         stats['task_num'] = task.task_name
         stats['time_spent'] = time_spent
+        stats['n_iterations'] = n_iterations
         task_stats.append(stats)
 
         # solution_selection.save_predictions(train_history_loggers[:i+1])
@@ -242,3 +257,35 @@ if __name__ == "__main__":
     # Write down how long it all took
     with open(f'{dir_path}/timing_result.txt', 'w') as f:
         f.write("Time elapsed in seconds: " + str(time.time() - start_time))
+
+    fixed_stats = [stat for stat in task_stats if stat['is_shape_fixed']]
+    different_stats = [stat for stat in task_stats if not stat['is_shape_fixed']]
+    total_stats = task_stats
+
+    summary_data = []
+
+    def compute_averages(stats, category):
+        if not stats:
+            return None
+        n = len(stats)
+        avgs = {
+            'category': category,
+            'num_tasks': n,
+        }
+        columns = ['avg_total_loss', 'last_total_loss', 'last_test_recon', 'top1_match_pct', 'top2_match_pct', 'time_spent']
+        for col in columns:
+            avgs[f'avg_{col}'] = sum(stat[col] for stat in stats) / n
+        avgs['total_time_spent'] = sum(stat['time_spent'] for stat in stats)
+        return avgs
+
+    for group, cat in [(fixed_stats, 'fixed'), (different_stats, 'different'), (total_stats, 'total')]:
+        avg = compute_averages(group, cat)
+        if avg:
+            summary_data.append(avg)
+
+    if summary_data:
+        keys = summary_data[0].keys()
+        with open(f'{dir_path}/summary.csv', 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=keys)
+            writer.writeheader()
+            writer.writerows(summary_data)
