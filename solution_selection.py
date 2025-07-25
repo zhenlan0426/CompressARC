@@ -142,17 +142,10 @@ class Logger:
             if self.task.in_out_same_size or self.task.all_out_same_size:
                 x_length = self.task.shapes[self.task.n_train+example_num][1][0]
                 y_length = self.task.shapes[self.task.n_train+example_num][1][1]
-            solution_slice = self.best_crop(colors[example_num],
-                                            x_mask[example_num],
-                                            x_length,
-                                            y_mask[example_num],
-                                            y_length)  # x, y
-            uncertainty_slice = self.best_crop(uncertainties[example_num],
-                                               x_mask[example_num],
-                                               x_length,
-                                               y_mask[example_num],
-                                               y_length)  # x, y
-
+            x_start, x_end = self._best_slice_point(x_mask[example_num], x_length)
+            y_start, y_end = self._best_slice_point(y_mask[example_num], y_length)
+            solution_slice = colors[example_num, x_start:x_end, y_start:y_end]
+            uncertainty_slice = uncertainties[example_num, x_start:x_end, y_start:y_end]
             solution_slices.append(solution_slice.cpu().numpy().tolist())
             uncertainty_values.append(float(np.mean(uncertainty_slice.cpu().numpy())))
 
