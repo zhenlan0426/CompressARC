@@ -17,7 +17,8 @@ better to not have special treatment?
    - mapping from task dim -> optimal batch size (best performance given walltime budget).
    - **multi-start optimization and batch size implmentation can be separated**, e.g., I can have 8 starting points and batch size of 2 forward and backward pass (repeat 4 times in loop). and this can be done at layer level, e.g. different layers have different batch size while all have same number of starting points.
 12. Test-time-training (TTT) is naively parallelizable as weights not shared across tasks.
-    
+13. best_crop in solution_selection.py only considers logit about grid position and size but not about the logits of the grid contents.
+
 does not work:
 3. multitensor system is conceptually elegant, but not efficient for computation. Reimplement with a single flattened tensor?
    - share up / down, pick and choose from flattened tensor to add. share down needs to be normalized by size of the tensor. another way to think of this is sparse matrix multiplication.
