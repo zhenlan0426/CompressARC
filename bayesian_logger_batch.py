@@ -169,9 +169,9 @@ class BayesianLogger(_BaseLogger):
         total_sum = mask.sum(dim=2, keepdim=True)                # (B, n_test, 1)
 
         # Prepare tensors to record best values
-        best_score = torch.full((B, n_test), -float('inf'))      # (B, n_test)
-        best_start = torch.zeros((B, n_test), dtype=torch.long)
-        best_end = torch.ones((B, n_test), dtype=torch.long)
+        best_score = torch.full((B, n_test), -float('inf'), device=mask.device)      # (B, n_test)
+        best_start = torch.zeros((B, n_test), dtype=torch.long, device=mask.device)
+        best_end = torch.ones((B, n_test), dtype=torch.long, device=mask.device)
 
         is_fixed = self.task.in_out_same_size or self.task.all_out_same_size
         if not is_fixed:

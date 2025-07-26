@@ -7,7 +7,7 @@ import preprocessing
 # Use the batched ARCCompressor implementation which prepends a batch dimension
 import arc_compressor_batch as arc_compressor
 import solution_selection_batch as solution_selection
-
+import bayesian_logger_batch as bl
 
 
 """
@@ -60,7 +60,7 @@ def get_optimal_batch_size(task):
     else:
         return 1
 
-def take_step(task, model, optimizer, train_step, train_history_logger, track_last=False):
+def take_step(task, model, optimizer, train_step, train_history_logger: bl.BayesianLogger, track_last=False):
     """
     Runs a forward pass of the model on the ARC-AGI task.
     Args:
@@ -78,14 +78,15 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
     # Pre-append a zero-logit channel for the black colour along the colour dimension (dim=2)
     logits = torch.cat([torch.zeros_like(logits[:, :, :1, ...]), logits], dim=2)
 
-    # Compute the total KL loss
-    total_KL = 0
+    B = logits.shape[0]
+    per_sample_KL = torch.zeros(B, device=logits.device)
     for KL_amount in KL_amounts:
-        total_KL = total_KL + torch.sum(KL_amount)
+        per_sample_KL += KL_amount.sum(dim=list(range(1, KL_amount.ndim)))
+    total_KL = per_sample_KL.sum()
 
-    # Compute the reconstruction error
-    reconstruction_error = 0
+    reconstruction_error_per_sample = torch.zeros(B, device=logits.device)
     test_reconstruction_error = 0
+
     for example_num in range(task.n_examples):  # sum over examples
         for in_out_mode in range(2):  # sum over in/out grid per example
             if example_num >= task.n_train and in_out_mode == 1:
@@ -164,12 +165,13 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
             logprob = torch.logsumexp(coefficient * logprobs, dim=(1, 2)) / coefficient  # (B,)
 
             if example_num >= task.n_train and in_out_mode == 1:
-                test_reconstruction_error = test_reconstruction_error - logprob.sum()
+                test_reconstruction_error += -logprob.sum()
             else:
-                reconstruction_error = reconstruction_error - logprob.sum()
+                reconstruction_error_per_sample = reconstruction_error_per_sample - logprob
 
-    loss = total_KL + 10*reconstruction_error
-    loss.backward()
+    reconstruction_error = reconstruction_error_per_sample.sum()
+    scalar_loss = total_KL + 10 * reconstruction_error
+    scalar_loss.backward()
     optimizer.step()
     optimizer.zero_grad()
 
@@ -182,16 +184,20 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
                              KL_names,
                              total_KL,
                              reconstruction_error,
-                             loss,
+                             per_sample_KL + 10 * reconstruction_error_per_sample,
                              test_reconstruction_error if track_last else None)
 
 
 if __name__ == "__main__":
     start_time = time.time()
-
-    task_nums = list(range(1000))
+    ######################## hyperparameters for training ##################################
+    task_nums = list(range(1))
     split = "evaluation"  # "training", "evaluation, or "test"
     only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
+    burn_in = 100
+    track_freq = 10
+    n_iterations = 500
+    ########################################################################################
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
     tasks = preprocessing.preprocess_tasks(split, task_nums)
@@ -200,15 +206,14 @@ if __name__ == "__main__":
     models = []
     optimizers = []
     train_history_loggers = []
-    iteration_counts = []
     for task in tasks:
         batch_size = get_optimal_batch_size(task)
-        iteration_counts.append(640 // batch_size)
         model = arc_compressor.ARCCompressor(task, batch_size)
         models.append(model)
         optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
         optimizers.append(optimizer)
-        train_history_logger = solution_selection.Logger(task)
+
+        train_history_logger = bl.BayesianLogger(task, burn_in_steps=burn_in, track_frequency=track_freq)
         # visualization.plot_problem(train_history_logger)
         train_history_loggers.append(train_history_logger)
 
@@ -219,8 +224,6 @@ if __name__ == "__main__":
 
     # Train the models one by one
     for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
-        n_iterations = iteration_counts[i]
-
         task_start_time = time.time()
 
         for train_step in range(n_iterations):
@@ -251,6 +254,7 @@ if __name__ == "__main__":
 
     # Save task stats
     import csv
+    import pickle  # Added for saving complex data structures
     keys = task_stats[0].keys()
     with open(f'{dir_path}/task_stats.csv', 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=keys)
@@ -292,3 +296,17 @@ if __name__ == "__main__":
             writer = csv.DictWriter(f, fieldnames=keys)
             writer.writeheader()
             writer.writerows(summary_data)
+
+    # ------------------------------------------------------------------
+    # Save Bayesian samples and unique solutions for all tasks in ONE file
+    # Structure: {task_name: {'samples': ..., 'unique_solutions': ..., 'unique_index_solutions': ...}, ...}
+    all_bayesian_data = {}
+    for task, logger in zip(tasks, train_history_loggers):
+        all_bayesian_data[task.task_name] = {
+            'samples': logger.get_samples(),
+            'unique_solutions': logger.get_unique_solutions(),
+            'unique_index_solutions': logger.get_unique_index_solutions(),
+        }
+
+    with open(f'{dir_path}/bayesian_data.pkl', 'wb') as f:
+        pickle.dump(all_bayesian_data, f)
