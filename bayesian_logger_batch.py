@@ -81,7 +81,7 @@ class BayesianLogger(_BaseLogger):
         logits_cpu = logits.detach().cpu()
         x_mask_cpu = x_mask.detach().cpu()
         y_mask_cpu = y_mask.detach().cpu()
-        loss_cpu = loss.detach().cpu().view(-1).float()
+        loss_cpu = loss.detach().cpu()
 
         # Extract test-part tensors: shapes
         #   logits_t   -> (B, n_test, C+1, X, Y)
@@ -121,15 +121,16 @@ class BayesianLogger(_BaseLogger):
 
         Returns two parallel lists (mapped_colors, index_colors), each of length B.
         mapped_colors uses actual colour values; index_colors keeps colour indices.
+        returns: (B, n_test, X, Y), (B, n_test, X, Y)
         """
-        B, n_test, _, X, Y = pred.shape
+        B, n_test, _, _, _ = pred.shape
 
         # Colours & uncertainties
         colors = torch.argmax(pred, dim=2)                       # (B, n_test, X, Y)
 
         # Pre-compute best slice (start,end) for x & y per (B, n_test)
-        x_slice = self._best_slice_points_batch(x_mask)          # (B, n_test, 2)
-        y_slice = self._best_slice_points_batch(y_mask)          # (B, n_test, 2)
+        x_slice = self._best_slice_points_batch(x_mask, dim_index=0)          # (B, n_test, 2)
+        y_slice = self._best_slice_points_batch(y_mask, dim_index=1)          # (B, n_test, 2)
 
         mapped_solutions: List[Tuple] = []
         index_solutions: List[Tuple] = []
@@ -158,7 +159,7 @@ class BayesianLogger(_BaseLogger):
     # ------------------------------------------------------------------
     # Vectorised slice search
     # ------------------------------------------------------------------
-    def _best_slice_points_batch(self, mask: torch.Tensor) -> torch.Tensor:
+    def _best_slice_points_batch(self, mask: torch.Tensor, dim_index: int) -> torch.Tensor:
         """Return optimal (start,end) indices for every (B, n_test) mask.
 
         mask : (B, n_test, L)
@@ -172,23 +173,36 @@ class BayesianLogger(_BaseLogger):
         best_start = torch.zeros((B, n_test), dtype=torch.long)
         best_end = torch.ones((B, n_test), dtype=torch.long)
 
-        search_lengths = range(1, L + 1)
-        mask_ = mask.unsqueeze(1)                                # (B,1,n_test,L)
-        mask_ = mask_.reshape(B * n_test, 1, L)                  # merge for conv1d
-        for length in search_lengths:
-            kernel = torch.ones(1, 1, length, device=mask.device)
-            seg_sum = F.conv1d(mask_, kernel, stride=1)          # (B*n_test, 1, L-length+1)
-            seg_sum = seg_sum.squeeze(1)                         # (B*n_test, offsets)
+        is_fixed = self.task.in_out_same_size or self.task.all_out_same_size
+        if not is_fixed:
+            search_lengths = range(1, L + 1)
+            mask_ = mask.unsqueeze(1)                                # (B,1,n_test,L)
+            mask_ = mask_.reshape(B * n_test, 1, L)                  # merge for conv1d
+            for length in search_lengths:
+                kernel = torch.ones(1, 1, length, device=mask.device)
+                seg_sum = F.conv1d(mask_, kernel, stride=1)          # (B*n_test, 1, L-length+1)
+                seg_sum = seg_sum.squeeze(1)                         # (B*n_test, offsets)
 
-            score = 2 * seg_sum - total_sum.view(-1, 1)          # broadcast
-            # Find best offset for this length
-            max_score, max_idx = torch.max(score, dim=1)         # (B*n_test,)
+                score = 2 * seg_sum - total_sum.view(-1, 1)          # broadcast
+                # Find best offset for this length
+                max_score, max_idx = torch.max(score, dim=1)         # (B*n_test,)
 
-            update_mask = max_score > best_score.view(-1)
-            if update_mask.any():
-                best_score.view(-1)[update_mask] = max_score[update_mask]
-                best_start.view(-1)[update_mask] = max_idx[update_mask]
-                best_end.view(-1)[update_mask] = max_idx[update_mask] + length
+                update_mask = max_score > best_score.view(-1)
+                if update_mask.any():
+                    best_score.view(-1)[update_mask] = max_score[update_mask]
+                    best_start.view(-1)[update_mask] = max_idx[update_mask]
+                    best_end.view(-1)[update_mask] = max_idx[update_mask] + length
+        else:
+            for ex in range(n_test):
+                length = self.task.shapes[self.task.n_train + ex][1][dim_index]
+                mask_ex = mask[:, ex, :].unsqueeze(1)  # (B, 1, L)
+                kernel = torch.ones(1, 1, length, device=mask.device)
+                seg_sum = F.conv1d(mask_ex, kernel, stride=1).squeeze(1)  # (B, L-length+1)
+                score = 2 * seg_sum - total_sum[:, ex, 0].unsqueeze(1)  # (B, offsets)
+                max_score, max_idx = torch.max(score, dim=1)  # (B,)
+                best_score[:, ex] = max_score
+                best_start[:, ex] = max_idx
+                best_end[:, ex] = max_idx + length
 
         return torch.stack([best_start, best_end], dim=-1)       # (B, n_test, 2)
 

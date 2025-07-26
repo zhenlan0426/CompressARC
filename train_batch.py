@@ -71,7 +71,7 @@ def take_step(task, model, optimizer, train_step, train_history_logger, track_la
         train_history_logger (Logger): A logger object used for logging the forward pass outputs
                 of the model, as well as accuracy and other things.
     """
-
+    # TODO: revisit coefficient schedule for amortization / grid size uncertainty
     optimizer.zero_grad()
     logits, x_mask, y_mask, KL_amounts, KL_names, = model.forward()
     # Shape now: (B, E, C, X, Y, in_out)
@@ -191,9 +191,12 @@ if __name__ == "__main__":
 
     task_nums = list(range(1000))
     split = "evaluation"  # "training", "evaluation, or "test"
+    only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
     tasks = preprocessing.preprocess_tasks(split, task_nums)
+    if only_same_size_tasks:
+        tasks = [task for task in tasks if task.in_out_same_size or task.all_out_same_size]
     models = []
     optimizers = []
     train_history_loggers = []
