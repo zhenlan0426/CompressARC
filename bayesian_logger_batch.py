@@ -254,14 +254,14 @@ class BayesianLogger(_BaseLogger):
             recon_error = self._candidate_reconstruction_error(
                 Y_index, logits_t, x_mask_t, y_mask_t, device=device
             )  # (N_samples,)
-
-            total_score = torch.logsumexp(-(losses + recon_error), dim=0)
+            # P(Y|H) = sum_mu P(mu|H) * P(Y|mu), mu is logits
+            total_score = torch.logsumexp((-losses - recon_error), dim=0)
             candidate_scores[idx] = total_score
 
         # Get best two candidates -----------------------------------------------------
-        best_idx = torch.argmax(candidate_scores).item()
-        second_idx = torch.argsort(candidate_scores, descending=True)[1].item() if n_candidates > 1 else best_idx
-
+        idx = torch.argsort(candidate_scores, descending=True)
+        best_idx = idx[0].item()
+        second_idx = idx[1].item()
         self.solution_most_frequent = self.unique_solutions[best_idx]
         self.solution_second_most_frequent = self.unique_solutions[second_idx]
 
@@ -275,9 +275,9 @@ class BayesianLogger(_BaseLogger):
         
         device = self.logits_samples[0].device
         losses = torch.tensor(self.losses, dtype=torch.float32, device=device)
-        logits = torch.stack(self.logits_samples, dim=0)
-        x_mask = torch.stack(self.x_mask_samples, dim=0)
-        y_mask = torch.stack(self.y_mask_samples, dim=0)
+        logits = torch.stack(self.logits_samples, dim=0).to(device)
+        x_mask = torch.stack(self.x_mask_samples, dim=0).to(device)
+        y_mask = torch.stack(self.y_mask_samples, dim=0).to(device)
         return losses, logits, x_mask, y_mask
 
     # ------------------------------------------------------------------

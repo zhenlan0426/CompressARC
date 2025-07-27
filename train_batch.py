@@ -114,7 +114,7 @@ def take_step(task, model, optimizer, train_step, train_history_logger: bl.Bayes
 if __name__ == "__main__":
     start_time = time.time()
     ######################## hyperparameters for training ##################################
-    task_nums = list(range(1))
+    task_nums = list(range(1000))
     split = "evaluation"  # "training", "evaluation, or "test"
     only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
     burn_in = 100
@@ -155,8 +155,8 @@ if __name__ == "__main__":
 
         time_spent = time.time() - task_start_time
 
-        # visualization.plot_solution(train_history_logger)
-
+        # Compute the best and second best solutions
+        train_history_logger.finalize_solutions()
         stats = train_history_logger.compute_stats()
         stats['task_num'] = task.task_name
         stats['time_spent'] = time_spent
