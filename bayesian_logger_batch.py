@@ -4,6 +4,8 @@ from typing import List, Tuple, Any
 
 from solution_selection_batch import Logger as _BaseLogger
 
+from utils_batch import compute_grid_logprob, compute_grid_size_log_partition
+
 
 class BayesianLogger(_BaseLogger):
     """Extended Logger that collects posterior samples for Bayesian ensembling.
@@ -28,10 +30,12 @@ class BayesianLogger(_BaseLogger):
 
         # Bayesian-specific containers
         self.unique_solutions: List[Tuple] = []           # actual colour grids
-        self.unique_index_solutions: List[Tuple] = []     # colour-index grids
+        self.unique_index_solutions: List[List[torch.Tensor]] = []     # colour-index grids
         self._solution_hash_set = set()
-        # Each element: (elbo_loss (float), logits (Tensor), x_mask (Tensor), y_mask (Tensor))
-        self.samples: List[Tuple[float, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+        self.losses: List[float] = []
+        self.logits_samples: List[torch.Tensor] = []
+        self.x_mask_samples: List[torch.Tensor] = []
+        self.y_mask_samples: List[torch.Tensor] = []
 
     # ------------------------------------------------------------------
     # Public API: override parent log
@@ -77,25 +81,22 @@ class BayesianLogger(_BaseLogger):
         if (train_step - self.burn_in_steps) % self.track_frequency != 0:
             return
 
-        # Move tensors to CPU & detach to free VRAM
-        logits_cpu = logits.detach().cpu()
-        x_mask_cpu = x_mask.detach().cpu()
-        y_mask_cpu = y_mask.detach().cpu()
-        loss_cpu = loss.detach().cpu()
+        # Detach tensors without moving to CPU
+        logits_det = logits.detach()
+        x_mask_det = x_mask.detach()
+        y_mask_det = y_mask.detach()
+        loss_det = loss.detach()
 
-        # Extract test-part tensors: shapes
-        #   logits_t   -> (B, n_test, C+1, X, Y)
-        #   x_mask_t   -> (B, n_test, X)
-        #   y_mask_t   -> (B, n_test, Y)
-        logits_t = logits_cpu[:, self.task.n_train:, :, :, :, 1]
-        x_mask_t = x_mask_cpu[:, self.task.n_train:, :, 1]
-        y_mask_t = y_mask_cpu[:, self.task.n_train:, :, 1]
+        # Extract test-part tensors
+        logits_t = logits_det[:, self.task.n_train:, :, :, :, 1]
+        x_mask_t = x_mask_det[:, self.task.n_train:, :, 1]
+        y_mask_t = y_mask_det[:, self.task.n_train:, :, 1]
 
         # Compute predicted grids for the whole batch *vectorised*
         solutions_mapped, solutions_index = self._make_solutions_batch(logits_t, x_mask_t, y_mask_t)
 
         # Store information sample-wise ------------------------------------
-        B = logits_cpu.shape[0]
+        B = logits_det.shape[0]
         for b in range(B):
             # 1) unique Y
             sol_mapped = solutions_mapped[b]
@@ -106,9 +107,11 @@ class BayesianLogger(_BaseLogger):
                 self.unique_solutions.append(sol_mapped)
                 self.unique_index_solutions.append(sol_index)
 
-            # 2) raw tensors + corresponding per-sample loss
-            self.samples.append((float(loss_cpu[b].item()),
-                                 logits_t[b], x_mask_t[b], y_mask_t[b]))
+            # 2) Append to separate lists
+            self.losses.append(float(loss_det[b].item()))
+            self.logits_samples.append(logits_t[b])
+            self.x_mask_samples.append(x_mask_t[b])
+            self.y_mask_samples.append(y_mask_t[b])
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -133,7 +136,7 @@ class BayesianLogger(_BaseLogger):
         y_slice = self._best_slice_points_batch(y_mask, dim_index=1)          # (B, n_test, 2)
 
         mapped_solutions: List[Tuple] = []
-        index_solutions: List[Tuple] = []
+        index_solutions: List[List[torch.Tensor]] = []
 
         for b in range(B):
             mapped_ex_slices = []
@@ -143,16 +146,18 @@ class BayesianLogger(_BaseLogger):
                 xs, xe = x_slice[b, ex]
                 ys, ye = y_slice[b, ex]
 
-                # Extract colour indices for this slice once
-                grid_idx = colors[b, ex, xs:xe, ys:ye].cpu().numpy().tolist()
-                index_ex_slices.append(tuple(tuple(r) for r in grid_idx))
+                grid_tensor = colors[b, ex, xs:xe, ys:ye]
 
-                # Map indices → actual colours using task.colors
-                mapped_grid = [[self.task.colors[val] for val in row] for row in grid_idx]
+                index_ex_slices.append(grid_tensor)
+
+                grid_list = grid_tensor.cpu().tolist()
+
+                mapped_grid = [[self.task.colors[val] for val in row] for row in grid_list]
+
                 mapped_ex_slices.append(tuple(tuple(r) for r in mapped_grid))
 
             mapped_solutions.append(tuple(mapped_ex_slices))
-            index_solutions.append(tuple(index_ex_slices))
+            index_solutions.append(index_ex_slices)
 
         return mapped_solutions, index_solutions
 
@@ -212,11 +217,11 @@ class BayesianLogger(_BaseLogger):
     def get_unique_solutions(self) -> List[Tuple]:
         return self.unique_solutions
 
-    def get_unique_index_solutions(self) -> List[Tuple]:
+    def get_unique_index_solutions(self) -> List[List[torch.Tensor]]:
         return self.unique_index_solutions
 
     def get_samples(self):
-        return self.samples 
+        return [(loss, logits.cpu(), x_mask.cpu(), y_mask.cpu()) for loss, logits, x_mask, y_mask in zip(self.losses, self.logits_samples, self.x_mask_samples, self.y_mask_samples)]
 
     # ------------------------------------------------------------------
     # Offline Bayesian aggregation ---------------------------------------------------
@@ -265,52 +270,52 @@ class BayesianLogger(_BaseLogger):
     # ------------------------------------------------------------------
     def _stack_samples(self):
         """Return stacked (losses, logits, x_mask, y_mask)."""
-        losses = torch.tensor([s[0] for s in self.samples], dtype=torch.float32)
-        logits = torch.stack([s[1] for s in self.samples], dim=0)      # (N, n_test, C+1, X, Y)
-        x_mask = torch.stack([s[2] for s in self.samples], dim=0)      # (N, n_test, X)
-        y_mask = torch.stack([s[3] for s in self.samples], dim=0)      # (N, n_test, Y)
+        if not self.losses:
+            return torch.tensor([]), torch.tensor([]), torch.tensor([]), torch.tensor([])
+        
+        device = self.logits_samples[0].device
+        losses = torch.tensor(self.losses, dtype=torch.float32, device=device)
+        logits = torch.stack(self.logits_samples, dim=0)
+        x_mask = torch.stack(self.x_mask_samples, dim=0)
+        y_mask = torch.stack(self.y_mask_samples, dim=0)
         return losses, logits, x_mask, y_mask
 
     # ------------------------------------------------------------------
     # Helper: compute reconstruction error of a candidate grid across samples
     # ------------------------------------------------------------------
     def _candidate_reconstruction_error(self,
-                                        candidate_index_sol: Tuple,
+                                        candidate_index_sol: List[torch.Tensor],
                                         logits_t: torch.Tensor,
                                         x_mask_t: torch.Tensor,
                                         y_mask_t: torch.Tensor,
                                         *,
-                                        device=torch.device('cpu')) -> torch.Tensor:
+                                        device=torch.device('cuda')) -> torch.Tensor:
         """Return vector of size (N_samples,) with negative log-likelihood per sample."""
-        from train_batch import mask_select_logprobs, compute_sum_logp  # local import to avoid cycle
 
-        N, n_test, C, X, Y = logits_t.shape
+        N = logits_t.shape[0]
         recon_error = torch.zeros(N, dtype=torch.float32, device=device)
 
+        grid_size_uncertain = not (self.task.in_out_same_size or self.task.all_out_same_size)
+        coeff_mask = 1.0
+        coeff_softmax = 1.0
+
+        if grid_size_uncertain:
+            x_grid_log_partitions = compute_grid_size_log_partition(x_mask_t, coeff_mask)  # (N, n_test)
+            y_grid_log_partitions = compute_grid_size_log_partition(y_mask_t, coeff_mask)  # (N, n_test)
+        else:
+            x_grid_log_partitions = None
+            y_grid_log_partitions = None
+
         # Loop over test examples -----------------------------------------------------
-        for ex, grid in enumerate(candidate_index_sol):
-            if len(grid) == 0 or len(grid[0]) == 0:
-                continue  # empty grid, skip
-            h = len(grid)
-            w = len(grid[0])
+        for ex, target in enumerate(candidate_index_sol):
+            logits_slice = logits_t[:, ex, :, :, :]
+            x_mask_ex = x_mask_t[:, ex, :]
+            y_mask_ex = y_mask_t[:, ex, :]
 
-            target = torch.tensor(grid, dtype=torch.long, device=device)  # (h, w)
+            precomp_x = x_grid_log_partitions[:, ex] if grid_size_uncertain else None
+            precomp_y = y_grid_log_partitions[:, ex] if grid_size_uncertain else None
 
-            # Compute log priors for x/y offsets for *all* samples at once
-            x_log_partition, x_logprobs = mask_select_logprobs(x_mask_t[:, ex, :], h)  # (N,), (N, O_x)
-            y_log_partition, y_logprobs = mask_select_logprobs(y_mask_t[:, ex, :], w)  # (N,), (N, O_y)
-
-
-            # Prepare broadcast versions
-            x_prior = (x_logprobs - x_log_partition.unsqueeze(1)).unsqueeze(2)  # (N, Ox, 1)
-            y_prior = (y_logprobs - y_log_partition.unsqueeze(1)).unsqueeze(1)  # (N, 1, Oy)
-            prior = x_prior + y_prior                                           # (N, Ox, Oy)
-
-            logits_slice = logits_t[:, ex, :, :, :]  # (N, C, X, Y)
-            sum_logp = compute_sum_logp(logits_slice, target)  # (N, Ox, Oy)
-            ll_offsets = sum_logp
-
-            logprob = torch.logsumexp(prior + ll_offsets, dim=(1, 2))  # (N,)
+            logprob = compute_grid_logprob(logits_slice, target, x_mask_ex, y_mask_ex, grid_size_uncertain, coeff_mask, coeff_softmax, precomp_x, precomp_y)
             recon_error = recon_error - logprob  # subtract because we aggregate negative log-likelihood
 
         return recon_error 

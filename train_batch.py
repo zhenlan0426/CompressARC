@@ -9,6 +9,7 @@ import arc_compressor_batch as arc_compressor
 import solution_selection_batch as solution_selection
 import bayesian_logger_batch as bl
 
+from utils_batch import compute_grid_size_log_partition, compute_grid_logprob
 
 """
 This file trains a model for every ARC-AGI task in a split.
@@ -17,91 +18,6 @@ This file trains a model for every ARC-AGI task in a split.
 np.random.seed(0)
 torch.manual_seed(0)
 
-
-def compute_sum_logp(logits_slice, target_crop):
-    """
-    Compute the sum of log-probabilities for a given target crop sliding over the logits_slice.
-    Args:
-        logits_slice (Tensor): Tensor of shape (B, C, X, Y)
-        target_crop (Tensor): Tensor of shape (x, y)
-    Returns:
-        Tensor: sum_logp of shape (B, X - x + 1, Y - y + 1)
-    """
-    C = logits_slice.shape[1]
-    logp = torch.nn.functional.log_softmax(logits_slice, dim=1)  # (B, C, LH, LW)
-    target_one_hot = torch.nn.functional.one_hot(target_crop.long(), num_classes=C).to(logp.dtype)  # (OH, OW, C)
-    target_one_hot = target_one_hot.permute(2, 0, 1).unsqueeze(0)  # (1, C, OH, OW)
-    conv_out = torch.nn.functional.conv2d(logp, target_one_hot, padding=0)  # (B, 1, O_x, O_y)
-    sum_logp = conv_out.squeeze(1)  # (B, O_x, O_y)
-    return sum_logp
-
-
-def mask_select_logprobs(mask, length):
-    """
-    Compute the (unnormalised) log-probabilities for selecting every contiguous slice of
-    the specified length, **vectorised over the batch dimension**.
-
-    Args:
-        mask (Tensor): Tensor of shape (B, L) where B is the batch size and L the
-                       maximum possible length. Larger (more positive) entries mean the
-                       corresponding index is *less* likely to be masked out.
-        length (int):  Desired slice length.
-
-    Returns:
-        Tensor: log_partition of shape (B,) – log-partition-function for each batch element.
-        Tensor: logprobs      of shape (B, L-length+1) – unnormalised log-probability for
-                choosing a slice starting at every possible offset.
-    """
-
-    # Compute the sum over every contiguous window of size `length` using a 1-D convolution.
-    # The convolution reduces the problem to a single call that is fully vectorised over the batch.
-    #   middle_sum: (B, L - length + 1)
-    kernel = torch.ones((1, 1, length), dtype=mask.dtype, device=mask.device) # (1, 1, length)
-    middle_sum = torch.nn.functional.conv1d(mask.unsqueeze(1), kernel).squeeze(1) # (B, L - length + 1)
-
-    # Total sum per batch element – used to avoid explicitly computing before/after sums.
-    # See derivation in commit message:  logprob(offset) = 2 * middle_sum - total_sum
-    total_sum = mask.sum(dim=1, keepdim=True)  # (B, 1)
-
-    logprobs = 2 * middle_sum - total_sum  # (B, L - length + 1)
-    log_partition = torch.logsumexp(logprobs, dim=1)  # (B,)
-    return log_partition, logprobs
-
-def compute_grid_size_log_partition(mask: torch.Tensor, coefficient: float):
-    """Vectorised helper to compute the log-partition when the grid size is unknown.
-
-    This replaces the triple-nested loop over `(example_num, in_out_mode, length)`
-    with a single loop over `length`, vectorised over the first two dimensions.
-
-    Args:
-        mask (Tensor): Tensor of shape (B, E, L) – *without* the `in_out` dimension.
-        coefficient (float): Scaling coefficient used in the original code (the
-            small value when the grid size is uncertain, otherwise `1`).
-
-    Returns:
-        Tensor: log-partition of shape (B, E) containing the log-sum-exp over all
-            possible grid sizes for every `(batch, example)` pair.
-    """
-
-    # We assume the *last* dimension is `L` (the maximum possible grid length).
-    # All remaining dimensions (except the batch dim) are treated uniformly and
-    # vectorised over.
-    L = mask.shape[-1]
-
-    # Flatten all but the last dimension so we can call `mask_select_logprobs`
-    # once per possible length.
-    mask_flat = (coefficient * mask).reshape(-1, L)  # (B * R, L),  R = prod(other dims)
-
-    # Accumulate log-partitions for every possible slice length.
-    parts = []
-    for length in range(1, L + 1):
-        part, _ = mask_select_logprobs(mask_flat, length)  # (B * R,)
-        parts.append(part)
-
-    # Combine over all lengths (log-sum-exp) and reshape back to the original
-    # non-length dimensions.
-    log_partition_flat = torch.logsumexp(torch.stack(parts, dim=0), dim=0)  # (B * R,)
-    return log_partition_flat.reshape(*mask.shape[:-1])  # (B, *other_dims)
 
 def get_optimal_batch_size(task):
     grid_size = task.n_examples * task.n_colors * task.n_x * task.n_y
@@ -157,50 +73,22 @@ def take_step(task, model, optimizer, train_step, train_history_logger: bl.Bayes
                 if not track_last:
                     continue
 
-            # Determine whether the grid size is already known.
-            # If not, there is an extra term in the reconstruction error, corresponding to
-            # the probability of reconstructing the correct grid size.
             grid_size_uncertain = not (task.in_out_same_size or task.all_out_same_size and in_out_mode==1 or task.all_in_same_size and in_out_mode==0)
-            if grid_size_uncertain:
-                coefficient = 0.01**max(0, 1-train_step/100)
-            else:
-                coefficient = 1
+            coeff_mask = 0.01 ** max(0, 1 - train_step / 100) if grid_size_uncertain else 1.0
+
             logits_slice = logits[:, example_num, :, :, :, in_out_mode]  # (B, C, x, y)
             problem_slice = task.problem[example_num, :, :, in_out_mode]  # (x, y)
-            output_shape = task.shapes[example_num][in_out_mode]
-            x_log_partition, x_logprobs = mask_select_logprobs(
-                coefficient * x_mask[:, example_num, :, in_out_mode],
-                output_shape[0]
-            )  # (B,), (B, O_x)
-            y_log_partition, y_logprobs = mask_select_logprobs(
-                coefficient * y_mask[:, example_num, :, in_out_mode],
-                output_shape[1]
-            )  # (B,), (B, O_y)
-            # Account for probability of getting right grid size, if grid size is not known
-            if grid_size_uncertain:
-                # Use the pre-computed, vectorised log-partitions.
-                x_log_partition = x_grid_log_partitions[:, example_num, in_out_mode]
-                y_log_partition = y_grid_log_partitions[:, example_num, in_out_mode]
 
-            # log P(correct colors) = log sum over all possible starts P(grid that starts at x_offset, y_offset) * P(correct colors given grid)
-            # log sum exp log P(above) = log sum exp (log P1 + log P2)
-            # this two loops calculate log P1 + log P2
-            B = logits_slice.shape[0]
-            sum_logp = compute_sum_logp(logits_slice, problem_slice)
+            x_mask_slice = x_mask[:, example_num, :, in_out_mode]
+            y_mask_slice = y_mask[:, example_num, :, in_out_mode]
 
-            # Add priors
-            x_logprobs_exp = x_logprobs.unsqueeze(2)  # (B, O_x, 1)
-            y_logprobs_exp = y_logprobs.unsqueeze(1)  # (B, 1, O_y)
-            logprobs = sum_logp + x_logprobs_exp + y_logprobs_exp - x_log_partition[:, None, None] - y_log_partition[:, None, None]
+            precomp_x = x_grid_log_partitions[:, example_num, in_out_mode]
+            precomp_y = y_grid_log_partitions[:, example_num, in_out_mode]
 
-            if grid_size_uncertain:
-                coefficient = 0.1**max(0, 1-train_step/100)
-            else:
-                coefficient = 1
-            logprob = torch.logsumexp(coefficient * logprobs, dim=(1, 2)) / coefficient  # (B,)
+            logprob = compute_grid_logprob(logits_slice, problem_slice, x_mask_slice, y_mask_slice, grid_size_uncertain, coeff_mask, coeff_mask, precomp_x, precomp_y)
 
             if example_num >= task.n_train and in_out_mode == 1:
-                test_reconstruction_error += -logprob.sum()
+                test_reconstruction_error -= logprob.sum()
             else:
                 reconstruction_error_per_sample = reconstruction_error_per_sample - logprob
 
