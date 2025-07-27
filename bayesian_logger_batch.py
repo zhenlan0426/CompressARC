@@ -217,3 +217,114 @@ class BayesianLogger(_BaseLogger):
 
     def get_samples(self):
         return self.samples 
+
+    # ------------------------------------------------------------------
+    # Offline Bayesian aggregation ---------------------------------------------------
+    # ------------------------------------------------------------------
+    def finalize_solutions(self):
+        """Compute `solution_most_frequent` and `solution_second_most_frequent`.
+
+        This must be called **after** training is finished for the task. It
+        evaluates *every* candidate grid in ``unique_index_solutions`` under
+        *every* posterior sample stored in ``self.samples``. The score used is
+
+            score(Y) = log ∑_i exp( - [ ELBO_i  +  RE_i(Y) ] )
+
+        where *ELBO_i* is the per-sample loss that was logged during training
+        and *RE_i(Y)* is the negative log-likelihood ("test reconstruction
+        error") of candidate *Y* under sample *i*.
+        """
+        if not self.unique_index_solutions:
+            # Nothing to do
+            return
+
+        # 1. Stack sample tensors -----------------------------------------------------
+        losses, logits_t, x_mask_t, y_mask_t = self._stack_samples()
+        device = logits_t.device  # CPU
+
+        n_candidates = len(self.unique_index_solutions)
+        candidate_scores = torch.full((n_candidates,), -float('inf'))
+
+        for idx, Y_index in enumerate(self.unique_index_solutions):
+            recon_error = self._candidate_reconstruction_error(
+                Y_index, logits_t, x_mask_t, y_mask_t, device=device
+            )  # (N_samples,)
+
+            total_score = torch.logsumexp(-(losses + recon_error), dim=0)
+            candidate_scores[idx] = total_score
+
+        # Get best two candidates -----------------------------------------------------
+        best_idx = torch.argmax(candidate_scores).item()
+        second_idx = torch.argsort(candidate_scores, descending=True)[1].item() if n_candidates > 1 else best_idx
+
+        self.solution_most_frequent = self.unique_solutions[best_idx]
+        self.solution_second_most_frequent = self.unique_solutions[second_idx]
+
+    # ------------------------------------------------------------------
+    # Helper: stack samples into big tensors
+    # ------------------------------------------------------------------
+    def _stack_samples(self):
+        """Return stacked (losses, logits, x_mask, y_mask)."""
+        losses = torch.tensor([s[0] for s in self.samples], dtype=torch.float32)
+        logits = torch.stack([s[1] for s in self.samples], dim=0)      # (N, n_test, C+1, X, Y)
+        x_mask = torch.stack([s[2] for s in self.samples], dim=0)      # (N, n_test, X)
+        y_mask = torch.stack([s[3] for s in self.samples], dim=0)      # (N, n_test, Y)
+        return losses, logits, x_mask, y_mask
+
+    # ------------------------------------------------------------------
+    # Helper: compute reconstruction error of a candidate grid across samples
+    # ------------------------------------------------------------------
+    def _candidate_reconstruction_error(self,
+                                        candidate_index_sol: Tuple,
+                                        logits_t: torch.Tensor,
+                                        x_mask_t: torch.Tensor,
+                                        y_mask_t: torch.Tensor,
+                                        *,
+                                        device=torch.device('cpu')) -> torch.Tensor:
+        """Return vector of size (N_samples,) with negative log-likelihood per sample."""
+        from train_batch import mask_select_logprobs  # local import to avoid cycle
+
+        N, n_test, C, X, Y = logits_t.shape
+        recon_error = torch.zeros(N, dtype=torch.float32, device=device)
+
+        # Loop over test examples -----------------------------------------------------
+        for ex, grid in enumerate(candidate_index_sol):
+            if len(grid) == 0 or len(grid[0]) == 0:
+                continue  # empty grid, skip
+            h = len(grid)
+            w = len(grid[0])
+
+            target = torch.tensor(grid, dtype=torch.long, device=device)  # (h, w)
+
+            # Compute log priors for x/y offsets for *all* samples at once
+            x_log_partition, x_logprobs = mask_select_logprobs(x_mask_t[:, ex, :], h)  # (N,), (N, O_x)
+            y_log_partition, y_logprobs = mask_select_logprobs(y_mask_t[:, ex, :], w)  # (N,), (N, O_y)
+
+            Ox = x_logprobs.shape[1]
+            Oy = y_logprobs.shape[1]
+
+            # Prepare broadcast versions
+            x_prior = (x_logprobs - x_log_partition.unsqueeze(1)).unsqueeze(2)  # (N, Ox, 1)
+            y_prior = (y_logprobs - y_log_partition.unsqueeze(1)).unsqueeze(1)  # (N, 1, Oy)
+            prior = x_prior + y_prior                                           # (N, Ox, Oy)
+
+            # Cross-entropy component: iterate over offsets -------------------
+            ll_offsets = []  # list of (N, Ox, Oy) partial log-likelihood per offset
+            for x_off in range(Ox):
+                logits_x = logits_t[:, ex, :, x_off:x_off + h, :]  # (N, C, h, Y)
+                slice_rows = []
+                for y_off in range(Oy):
+                    logits_crop = logits_x[:, :, :, y_off:y_off + w]            # (N, C, h, w)
+                    # target broadcast over batch
+                    ce = torch.nn.functional.cross_entropy(
+                        logits_crop, target.unsqueeze(0).expand(N, -1, -1), reduction='none'
+                    )  # (N, h, w)
+                    ce_sum = ce.sum(dim=(1, 2))  # (N,)
+                    slice_rows.append(-ce_sum)   # log-likelihood (without prior)
+                ll_offsets.append(torch.stack(slice_rows, dim=1))  # (N, Oy)
+            ll_offsets = torch.stack(ll_offsets, dim=1)            # (N, Ox, Oy)
+
+            logprob = torch.logsumexp(prior + ll_offsets, dim=(1, 2))  # (N,)
+            recon_error = recon_error - logprob  # subtract because we aggregate negative log-likelihood
+
+        return recon_error 
