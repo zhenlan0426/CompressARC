@@ -282,7 +282,7 @@ class BayesianLogger(_BaseLogger):
                                         *,
                                         device=torch.device('cpu')) -> torch.Tensor:
         """Return vector of size (N_samples,) with negative log-likelihood per sample."""
-        from train_batch import mask_select_logprobs  # local import to avoid cycle
+        from train_batch import mask_select_logprobs, compute_sum_logp  # local import to avoid cycle
 
         N, n_test, C, X, Y = logits_t.shape
         recon_error = torch.zeros(N, dtype=torch.float32, device=device)
@@ -300,29 +300,15 @@ class BayesianLogger(_BaseLogger):
             x_log_partition, x_logprobs = mask_select_logprobs(x_mask_t[:, ex, :], h)  # (N,), (N, O_x)
             y_log_partition, y_logprobs = mask_select_logprobs(y_mask_t[:, ex, :], w)  # (N,), (N, O_y)
 
-            Ox = x_logprobs.shape[1]
-            Oy = y_logprobs.shape[1]
 
             # Prepare broadcast versions
             x_prior = (x_logprobs - x_log_partition.unsqueeze(1)).unsqueeze(2)  # (N, Ox, 1)
             y_prior = (y_logprobs - y_log_partition.unsqueeze(1)).unsqueeze(1)  # (N, 1, Oy)
             prior = x_prior + y_prior                                           # (N, Ox, Oy)
 
-            # Cross-entropy component: iterate over offsets -------------------
-            ll_offsets = []  # list of (N, Ox, Oy) partial log-likelihood per offset
-            for x_off in range(Ox):
-                logits_x = logits_t[:, ex, :, x_off:x_off + h, :]  # (N, C, h, Y)
-                slice_rows = []
-                for y_off in range(Oy):
-                    logits_crop = logits_x[:, :, :, y_off:y_off + w]            # (N, C, h, w)
-                    # target broadcast over batch
-                    ce = torch.nn.functional.cross_entropy(
-                        logits_crop, target.unsqueeze(0).expand(N, -1, -1), reduction='none'
-                    )  # (N, h, w)
-                    ce_sum = ce.sum(dim=(1, 2))  # (N,)
-                    slice_rows.append(-ce_sum)   # log-likelihood (without prior)
-                ll_offsets.append(torch.stack(slice_rows, dim=1))  # (N, Oy)
-            ll_offsets = torch.stack(ll_offsets, dim=1)            # (N, Ox, Oy)
+            logits_slice = logits_t[:, ex, :, :, :]  # (N, C, X, Y)
+            sum_logp = compute_sum_logp(logits_slice, target)  # (N, Ox, Oy)
+            ll_offsets = sum_logp
 
             logprob = torch.logsumexp(prior + ll_offsets, dim=(1, 2))  # (N,)
             recon_error = recon_error - logprob  # subtract because we aggregate negative log-likelihood
