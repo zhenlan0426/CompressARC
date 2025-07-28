@@ -6,7 +6,9 @@ from solution_selection_batch import Logger as _BaseLogger
 
 from utils_batch import compute_grid_logprob, compute_grid_size_log_partition
 
-
+# TODO: 1. length = self.task.shapes[self.task.n_train + ex][1][dim_index]. make sure it is infered rather than leaked from ground truth.
+#       2. Inference - _make_solutions_batch - should be done in the same way as in train, i.e. P(size) * P(colors | size), difference is 
+#          use argmax for inference, but sum for training over all possible sizes.
 class BayesianLogger(_BaseLogger):
     """Extended Logger that collects posterior samples for Bayesian ensembling.
 
