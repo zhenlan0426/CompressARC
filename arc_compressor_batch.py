@@ -31,7 +31,7 @@ class ARCCompressor:
     def channel_dim_fn(self, dims):
         return 16 if dims[2] == 0 else 8
 
-    def __init__(self, task, batch_size=8, batch_weights=True, shared_model=None):
+    def __init__(self, task, batch_size=8, shared_model=None, task_model=None):
         """
         Create a model that is tailored to the given task, and initialize all the weights.
         The weights are symmetrized such that swapping the x and y dimension ordering should
@@ -41,16 +41,20 @@ class ARCCompressor:
             task (preprocessing.Task): The task which the model is to be made for solving.
         """
         self.multitensor_system = task.multitensor_system
-
-        # task-specific weights
-        initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, batch_weights)
-        self.multiposteriors = initializer.initialize_multiposterior(self.decoding_dim)
-        self.target_capacities = initializer.initialize_multizeros([self.decoding_dim])
-        self.task_params = initializer.weights_list
+        if task_model is None:
+            # task-specific weights
+            initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, True)
+            self.multiposteriors = initializer.initialize_multiposterior(self.decoding_dim)
+            self.target_capacities = initializer.initialize_multizeros([self.decoding_dim])
+            self.task_params = initializer.weights_list
+        else:
+            self.multiposteriors = task_model.multiposteriors
+            self.target_capacities = task_model.target_capacities
+            self.task_params = task_model.task_params
         
         if shared_model is None:
             # shared weights
-            initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, batch_weights)
+            initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, False)
             self.decode_weights = initializer.initialize_multilinear([self.decoding_dim, self.channel_dim_fn])
             initializer.symmetrize_xy(self.decode_weights)
             
