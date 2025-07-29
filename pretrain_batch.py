@@ -7,6 +7,7 @@ import preprocessing
 # Use the batched ARCCompressor implementation which prepends a batch dimension
 import arc_compressor_batch as arc_compressor
 import solution_selection_batch as solution_selection
+from async_memory_manager import AsyncMemoryManager, optimizer_to
 
 from utils_batch import compute_grid_size_log_partition, compute_grid_logprob
 
@@ -106,11 +107,11 @@ if __name__ == "__main__":
     start_time = time.time()
     ######################## hyperparameters for training ##################################
     task_nums = list(range(1000))
-    split = "evaluation"  # "training", "evaluation, or "test"
+    split = "training"  # "training", "evaluation, or "test"
     only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
     burn_in = 100
     track_freq = 10
-    n_epochs = 500
+    n_epochs = 200
     ########################################################################################
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
@@ -143,40 +144,63 @@ if __name__ == "__main__":
 
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
-    def optimizer_to(optimizer, device):
-        for state in optimizer.state.values():
-            for k, v in state.items():
-                if torch.is_tensor(v):
-                    state[k] = v.to(device)
-
-    import random
-    for epoch in range(n_epochs):
-        order = list(range(len(tasks)))
-        random.shuffle(order)
-
-        epoch_loss = 0.0
-        epoch_test_recon = 0.0
-
-        for idx in order:
-            task = tasks[idx]
-            model = models[idx]
-            task_optimizer = task_optimizers[idx]
-
-            # ------ Move task resources to GPU ------
-            model.to_task_cuda()
-            optimizer_to(task_optimizer, 'cuda')
-
-            scalar_loss, test_recon = take_step(task, model, task_optimizer, shared_optimizer, epoch)
-            epoch_loss += scalar_loss
-            epoch_test_recon += test_recon
-
-            # ------ Off-load task back to CPU ------
-            model.to_task_cpu()
-            optimizer_to(task_optimizer, 'cpu')
-
-        avg_loss = epoch_loss / len(tasks)
-        avg_test = epoch_test_recon / len(tasks)
-        print(f"Epoch {epoch+1}/{n_epochs} - avg_loss={avg_loss:.4f} avg_testRecon={avg_test:.4f}")
+    
+    # Initialize async memory manager
+    memory_mgr = AsyncMemoryManager()
+    
+    try:
+        for epoch in range(n_epochs):
+            order = list(range(len(tasks)))
+            np.random.shuffle(order)
+            
+            epoch_loss = 0.0
+            epoch_test_recon = 0.0
+            
+            # Pre-load first task to GPU
+            if len(order) > 0:
+                first_idx = order[0]
+                models[first_idx].to_task_cuda()
+                optimizer_to(task_optimizers[first_idx], 'cuda')
+            
+            # Main training loop with async memory management
+            for i, idx in enumerate(order):
+                task = tasks[idx]
+                model = models[idx]
+                task_optimizer = task_optimizers[idx]
+                
+                # Prepare next task asynchronously (if exists)
+                next_gpu_future = None
+                if i + 1 < len(order):
+                    next_idx = order[i + 1]
+                    next_gpu_future = memory_mgr.move_to_gpu_async(
+                        models[next_idx], task_optimizers[next_idx]
+                    )
+                
+                # Core training step (current task already on GPU)
+                scalar_loss, test_recon = take_step(task, model, task_optimizer, shared_optimizer, epoch)
+                epoch_loss += scalar_loss
+                epoch_test_recon += test_recon
+                
+                # Start moving current task to CPU (async)
+                memory_mgr.move_to_cpu_async(model, task_optimizer)
+                
+                # Ensure next task is ready before continuing
+                memory_mgr.wait_for_gpu_ready(next_gpu_future)
+                
+                # Periodic cleanup to prevent memory buildup
+                if i % 10 == 0:
+                    memory_mgr.cleanup_completed()
+            
+            # Wait for all background operations to complete
+            memory_mgr.wait_all_complete()
+            
+            # Print epoch results
+            avg_loss = epoch_loss / len(tasks)
+            avg_test = epoch_test_recon / len(tasks)
+            print(f"Epoch {epoch+1}/{n_epochs} - avg_loss={avg_loss:.4f} avg_testRecon={avg_test:.4f}")
+    
+    finally:
+        memory_mgr.shutdown()
 
     import os
     import datetime
