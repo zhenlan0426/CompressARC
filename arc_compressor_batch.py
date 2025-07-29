@@ -8,7 +8,7 @@ import layers_batch as layers
 np.random.seed(0)
 torch.manual_seed(0)
 torch.set_default_dtype(torch.float32)
-torch.set_default_device('cuda')
+
 
 
 class ARCCompressor:
@@ -31,7 +31,7 @@ class ARCCompressor:
     def channel_dim_fn(self, dims):
         return 16 if dims[2] == 0 else 8
 
-    def __init__(self, task, batch_size=8, shared_model=None, task_model=None):
+    def __init__(self, task, batch_size=8, shared_model=None, task_model=None, device='cpu'):
         """
         Create a model that is tailored to the given task, and initialize all the weights.
         The weights are symmetrized such that swapping the x and y dimension ordering should
@@ -39,7 +39,14 @@ class ARCCompressor:
         be exactly correct since symmetrizing all operations is difficult.
         Args:
             task (preprocessing.Task): The task which the model is to be made for solving.
+            batch_size (int): Batch size for initialization.
+            shared_model (ARCCompressor): Existing model to reuse shared weights from.
+            task_model (ARCCompressor): Existing model to reuse task-specific weights from.
+            device (str): Device to initialize tensors on ('cuda' or 'cpu'). Defaults to 'cpu'.
         """
+        # Set default device for tensor creation during initialization
+        torch.set_default_device(device)
+        
         self.multitensor_system = task.multitensor_system
         if task_model is None:
             # task-specific weights
@@ -127,6 +134,22 @@ class ARCCompressor:
 
     def to_task_cuda(self):
         self._move_task_params("cuda")
+
+    # ------------------------------------------------------------------
+    # Utility helpers for device management of shared params
+    # ------------------------------------------------------------------
+    def _move_shared_params(self, device):
+        """Move only the shared parameters"""
+        for p in self.shared_params:
+            p.data = p.data.to(device)
+            if p.grad is not None:
+                p.grad = p.grad.to(device)
+
+    def to_shared_cpu(self):
+        self._move_shared_params("cpu")
+
+    def to_shared_cuda(self):
+        self._move_shared_params("cuda")
 
 
     def forward(self):

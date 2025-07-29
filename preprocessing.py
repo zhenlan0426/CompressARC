@@ -5,6 +5,7 @@ import multitensor_systems
 
 np.random.seed(0)
 torch.manual_seed(0)
+torch.set_default_device('cuda')
 
 class Task:
     """
