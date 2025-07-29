@@ -15,4 +15,4 @@ __pycache__/
 .pytest_cache/
 dataset/
 plots/
-results_for_the_blog_post/test.ipynb
+results_for_the_blog_post/

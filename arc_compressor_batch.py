@@ -31,7 +31,7 @@ class ARCCompressor:
     def channel_dim_fn(self, dims):
         return 16 if dims[2] == 0 else 8
 
-    def __init__(self, task, batch_size=8, batch_weights=True):
+    def __init__(self, task, batch_size=8, batch_weights=True, shared_model=None):
         """
         Create a model that is tailored to the given task, and initialize all the weights.
         The weights are symmetrized such that swapping the x and y dimension ordering should
@@ -42,53 +42,87 @@ class ARCCompressor:
         """
         self.multitensor_system = task.multitensor_system
 
-        # Initialize weights
+        # task-specific weights
         initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, batch_weights)
-
         self.multiposteriors = initializer.initialize_multiposterior(self.decoding_dim)
-        self.decode_weights = initializer.initialize_multilinear([self.decoding_dim, self.channel_dim_fn])
-        initializer.symmetrize_xy(self.decode_weights)
         self.target_capacities = initializer.initialize_multizeros([self.decoding_dim])
+        self.task_params = initializer.weights_list
+        
+        if shared_model is None:
+            # shared weights
+            initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, batch_weights)
+            self.decode_weights = initializer.initialize_multilinear([self.decoding_dim, self.channel_dim_fn])
+            initializer.symmetrize_xy(self.decode_weights)
+            
 
-        self.share_up_weights = []
-        self.share_down_weights = []
-        self.softmax_weights = []
-        self.cummax_weights = []
-        self.shift_weights = []
-        self.direction_share_weights = []
-        self.nonlinear_weights = []
+            self.share_up_weights = []
+            self.share_down_weights = []
+            self.softmax_weights = []
+            self.cummax_weights = []
+            self.shift_weights = []
+            self.direction_share_weights = []
+            self.nonlinear_weights = []
 
-        for layer_num in range(self.n_layers):
-            self.share_up_weights.append(initializer.initialize_multiresidual(self.share_up_dim, self.share_up_dim))
-            self.share_down_weights.append(initializer.initialize_multiresidual(self.share_down_dim, self.share_down_dim))
-            output_scaling_fn = lambda dims: self.softmax_dim * (2 ** (dims[1] + dims[2] + dims[3] + dims[4]) - 1)
-            self.softmax_weights.append(initializer.initialize_multiresidual(self.softmax_dim, output_scaling_fn))
-            self.cummax_weights.append(initializer.initialize_multiresidual(self.cummax_dim, self.cummax_dim))
-            self.shift_weights.append(initializer.initialize_multiresidual(self.shift_dim, self.shift_dim))
-            self.direction_share_weights.append(initializer.initialize_multidirection_share())
-            self.nonlinear_weights.append(initializer.initialize_multiresidual(self.nonlinear_dim, self.nonlinear_dim))
-
-        self.head_weights = initializer.initialize_head()
-        self.mask_weights = initializer.initialize_linear(
-            [1, 0, 0, 1, 0], [self.channel_dim_fn([1, 0, 0, 1, 0]), 2]
-        )
-
-        # Symmetrize weights so that their behavior is equivariant to swapping x and y dimension ordering
-        for weight_list in [
-            self.share_up_weights,
-            self.share_down_weights,
-            self.softmax_weights,
-            self.cummax_weights,
-            self.shift_weights,
-            self.nonlinear_weights,
-        ]:
             for layer_num in range(self.n_layers):
-                initializer.symmetrize_xy(weight_list[layer_num])
+                self.share_up_weights.append(initializer.initialize_multiresidual(self.share_up_dim, self.share_up_dim))
+                self.share_down_weights.append(initializer.initialize_multiresidual(self.share_down_dim, self.share_down_dim))
+                output_scaling_fn = lambda dims: self.softmax_dim * (2 ** (dims[1] + dims[2] + dims[3] + dims[4]) - 1)
+                self.softmax_weights.append(initializer.initialize_multiresidual(self.softmax_dim, output_scaling_fn))
+                self.cummax_weights.append(initializer.initialize_multiresidual(self.cummax_dim, self.cummax_dim))
+                self.shift_weights.append(initializer.initialize_multiresidual(self.shift_dim, self.shift_dim))
+                self.direction_share_weights.append(initializer.initialize_multidirection_share())
+                self.nonlinear_weights.append(initializer.initialize_multiresidual(self.nonlinear_dim, self.nonlinear_dim))
 
-        for layer_num in range(self.n_layers):
-            initializer.symmetrize_direction_sharing(self.direction_share_weights[layer_num])
+            self.head_weights = initializer.initialize_head()
+            self.mask_weights = initializer.initialize_linear(
+                [1, 0, 0, 1, 0], [self.channel_dim_fn([1, 0, 0, 1, 0]), 2]
+            )
 
-        self.weights_list = initializer.weights_list
+            # Symmetrize weights so that their behavior is equivariant to swapping x and y dimension ordering
+            for weight_list in [
+                self.share_up_weights,
+                self.share_down_weights,
+                self.softmax_weights,
+                self.cummax_weights,
+                self.shift_weights,
+                self.nonlinear_weights,
+            ]:
+                for layer_num in range(self.n_layers):
+                    initializer.symmetrize_xy(weight_list[layer_num])
+
+            for layer_num in range(self.n_layers):
+                initializer.symmetrize_direction_sharing(self.direction_share_weights[layer_num])
+            self.shared_params = initializer.weights_list
+        else:
+            # Re-use existing shared weights (references, not copies)
+            self.decode_weights = shared_model.decode_weights
+            self.share_up_weights = shared_model.share_up_weights
+            self.share_down_weights = shared_model.share_down_weights
+            self.softmax_weights = shared_model.softmax_weights
+            self.cummax_weights = shared_model.cummax_weights
+            self.shift_weights = shared_model.shift_weights
+            self.direction_share_weights = shared_model.direction_share_weights
+            self.nonlinear_weights = shared_model.nonlinear_weights
+            self.head_weights = shared_model.head_weights
+            self.mask_weights = shared_model.mask_weights
+            self.shared_params = shared_model.shared_params
+        self.weights_list = self.shared_params + self.task_params
+
+    # ------------------------------------------------------------------
+    # Utility helpers for device management of task-specific params
+    # ------------------------------------------------------------------
+    def _move_task_params(self, device):
+        """Move only the task-specific parameters (multiposteriors & capacities)"""
+        for p in self.task_params:
+            p.data = p.data.to(device)
+            if p.grad is not None:
+                p.grad = p.grad.to(device)
+
+    def to_task_cpu(self):
+        self._move_task_params("cpu")
+
+    def to_task_cuda(self):
+        self._move_task_params("cuda")
 
 
     def forward(self):
