@@ -25,10 +25,9 @@ def get_optimal_batch_size(task):
         return 16
     elif grid_size < 10000:
         return 8
-    elif grid_size < 20000:
-        return 4
     else:
-        return 2
+        return 4
+
 
 def take_step(task, model, optimizer_task, optimizer_shared, train_step, track_last=True):
     """
@@ -107,7 +106,7 @@ if __name__ == "__main__":
     start_time = time.time()
     ######################## hyperparameters for training ##################################
     task_nums = list(range(1000))
-    split = "evaluation"  # "training", "evaluation, or "test"
+    split = "training"  # "training", "evaluation, or "test"
     only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
     # burn_in = 100
     # track_freq = 10
@@ -129,7 +128,7 @@ if __name__ == "__main__":
             model = arc_compressor.ARCCompressor(task, batch_size, device='cuda')
             # Shared optimiser – only ever created once, keeps reference to shared_params
             shared_optimizer = torch.optim.Adam(model.shared_params, lr=0.01, betas=(0.5, 0.9))
-
+            
         else:
             # Subsequent tasks – reuse shared weights from the first model, init on CPU
             model = arc_compressor.ARCCompressor(task, batch_size, shared_model=models[0], device='cpu')        

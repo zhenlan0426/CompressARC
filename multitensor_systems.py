@@ -224,11 +224,14 @@ def multify(fn):
         multitensor_system = None
         multi_mode = False
 
-        # Identify if any arg or kwarg is a MultiTensor
+        # Find the first MultiTensor in args (prioritizes first argument)
         for arg in args:
             if isinstance(arg, MultiTensor):
                 multi_mode = True
                 multitensor_system = arg.multitensor_system
+                break
+        
+        # If no MultiTensor found in args, check kwargs
         if not multi_mode:
             for value in kwargs.values():
                 if isinstance(value, MultiTensor):

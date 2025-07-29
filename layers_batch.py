@@ -177,6 +177,9 @@ def share_direction(residual, share_weights, direction):
     up_project_weights = multitensor_systems.multify(lambda dims, weights: weights[1])(share_weights)
 
     multitensor_system = residual.multitensor_system
+    
+    # Create a copy of the original masks to prevent any mutations
+    original_masks = residual.multitensor_system.task.masks
 
     x = affine(residual, down_project_weights, use_bias=False)  # down-project
 
@@ -209,7 +212,7 @@ def share_direction(residual, share_weights, direction):
                             # only average over non-masked elements (top left corner)
                             if (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==3:  # be careful aggregating the x axis
                                 # expand/contract masks to make the dims the same as higher_x
-                                masks = x.multitensor_system.task.masks # (example, x, y, in/out)
+                                masks = original_masks # (example, x, y, in/out)
                                 masks = 1-(1-masks[...,0])*(1-masks[...,1]) # 1 if either in or out is 1, (example, x, y)
                                 for i in range(sum(higher_dims[1:3])):  # insert color and direction dims
                                     masks = masks[:,None,...]
@@ -220,7 +223,7 @@ def share_direction(residual, share_weights, direction):
                                 higher_x = torch.sum(higher_x*masks, dim=axis) / (torch.sum(masks, dim=axis)+1e-4)
                             elif (x.multitensor_system.task.in_out_same_size or x.multitensor_system.task.all_out_same_size) and dim==4:  # be careful aggregating the y axis
                                 # expand/contract masks to make the dims the same as higher_x
-                                masks = x.multitensor_system.task.masks
+                                masks = original_masks
                                 masks = 1-(1-masks[...,0])*(1-masks[...,1])
                                 for i in range(sum(higher_dims[1:3])):  # insert color and direction dims
                                     masks = masks[:,None,...]
@@ -306,6 +309,7 @@ def make_directional_layer(fn, diagonal_fn):
         """
 
         batch_size = x.shape[0]
+        # Create a copy of masks before modifying to avoid mutating the original
         masks = masks.unsqueeze(0).expand(batch_size, -1, -1, -1, -1)  # add batch dim and expand
 
         # rearrange mask to fit same shape as x
