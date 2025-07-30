@@ -9,7 +9,7 @@ import preprocessing
 import arc_compressor_batch as arc_compressor
 import solution_selection_batch as solution_selection
 from async_memory_manager import AsyncMemoryManager, optimizer_to
-from checkpoint_utils import save_checkpoint, load_checkpoint, create_checkpoint_dir
+from checkpoint_utils import save_checkpoint, load_checkpoint
 
 from utils_batch import compute_grid_size_log_partition, compute_grid_logprob
 
@@ -117,10 +117,11 @@ if __name__ == "__main__":
     only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
     # burn_in = 100
     # track_freq = 10
-    n_epochs = 2
+    n_epochs = 20
     
     # Checkpoint options
     resume_from_checkpoint = None  # Set to checkpoint path to resume training
+    # resume_from_checkpoint = "run_results/2025-07-30_09-34-08/checkpoint"  # Set to checkpoint path to resume training
     continue_training = True  # If True, save everything needed to continue training (shared + task params/optimizers)
     ########################################################################################
 
@@ -152,6 +153,9 @@ if __name__ == "__main__":
     start_epoch = 0
     if resume_from_checkpoint and os.path.exists(resume_from_checkpoint):
         start_epoch = load_checkpoint(resume_from_checkpoint, models, shared_optimizer, task_optimizers, continue_training=continue_training)
+        # Delete the old checkpoint after successful loading to save disk space
+        os.remove(resume_from_checkpoint)
+        print(f"Deleted old checkpoint: {resume_from_checkpoint}")
     
     # Initialize async memory manager
     memory_mgr = AsyncMemoryManager()
@@ -205,7 +209,7 @@ if __name__ == "__main__":
             # Print epoch results
             avg_loss = epoch_loss / len(tasks)
             avg_test = epoch_test_recon / len(tasks)
-            print(f"Epoch {epoch+1}/{n_epochs} - avg_loss={avg_loss:.4f} avg_testRecon={avg_test:.4f}")
+            print(f"Epoch {epoch+1}/{start_epoch+n_epochs} - avg_loss={avg_loss:.4f} avg_testRecon={avg_test:.4f}")
             
     finally:
         memory_mgr.shutdown()
@@ -217,7 +221,6 @@ if __name__ == "__main__":
     
     # save final checkpoint
     checkpoint_path = os.path.join(dir_path, "checkpoint")
-    os.makedirs(checkpoint_path, exist_ok=True)
     save_checkpoint(models, shared_optimizer, task_optimizers, epoch, checkpoint_path, continue_training=continue_training)
 
     # Save training summary

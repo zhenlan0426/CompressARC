@@ -7,7 +7,8 @@ import preprocessing
 # Use the batched ARCCompressor implementation which prepends a batch dimension
 import arc_compressor_batch as arc_compressor
 import solution_selection_batch as solution_selection
-import bayesian_logger_batch as bl
+# import bayesian_logger_batch as bl
+import solution_selection_batch as solution_selection
 
 from utils_batch import compute_grid_size_log_partition, compute_grid_logprob
 
@@ -30,7 +31,7 @@ def get_optimal_batch_size(task):
     else:
         return 2
 
-def take_step(task, model, optimizer, train_step, train_history_logger: bl.BayesianLogger, track_last=False):
+def take_step(task, model, optimizer, train_step, train_history_logger: solution_selection.Logger, track_last=False):
     """
     Runs a forward pass of the model on the ARC-AGI task.
     Args:
@@ -52,7 +53,7 @@ def take_step(task, model, optimizer, train_step, train_history_logger: bl.Bayes
     per_sample_KL = torch.zeros(B, device=logits.device)
     for KL_amount in KL_amounts:
         per_sample_KL += KL_amount.sum(dim=list(range(1, KL_amount.ndim)))
-    total_KL = per_sample_KL.sum()
+    total_KL = per_sample_KL.mean()
 
     reconstruction_error_per_sample = torch.zeros(B, device=logits.device)
     test_reconstruction_error = 0
@@ -92,7 +93,7 @@ def take_step(task, model, optimizer, train_step, train_history_logger: bl.Bayes
             else:
                 reconstruction_error_per_sample = reconstruction_error_per_sample - logprob
 
-    reconstruction_error = reconstruction_error_per_sample.sum()
+    reconstruction_error = reconstruction_error_per_sample.mean()
     scalar_loss = total_KL + 10 * reconstruction_error
     scalar_loss.backward()
     optimizer.step()
@@ -107,7 +108,7 @@ def take_step(task, model, optimizer, train_step, train_history_logger: bl.Bayes
                              KL_names,
                              total_KL,
                              reconstruction_error,
-                             per_sample_KL + 10 * reconstruction_error_per_sample,
+                             scalar_loss,
                              test_reconstruction_error if track_last else None)
 
 
@@ -136,7 +137,7 @@ if __name__ == "__main__":
         optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
         optimizers.append(optimizer)
 
-        train_history_logger = bl.BayesianLogger(task, burn_in_steps=burn_in, track_frequency=track_freq)
+        train_history_logger = solution_selection.Logger(task)
         # visualization.plot_problem(train_history_logger)
         train_history_loggers.append(train_history_logger)
 
@@ -150,13 +151,12 @@ if __name__ == "__main__":
         task_start_time = time.time()
 
         for train_step in range(n_iterations):
-            track_last = (train_step == n_iterations - 1)
-            take_step(task, model, optimizer, train_step, train_history_logger, track_last=track_last)
+            take_step(task, model, optimizer, train_step, train_history_logger)
 
         time_spent = time.time() - task_start_time
 
         # Compute the best and second best solutions
-        train_history_logger.finalize_solutions()
+        # train_history_logger.finalize_solutions()
         stats = train_history_logger.compute_stats()
         stats['task_num'] = task.task_name
         stats['time_spent'] = time_spent
@@ -223,13 +223,13 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------
     # Save Bayesian samples and unique solutions for all tasks in ONE file
     # Structure: {task_name: {'samples': ..., 'unique_solutions': ..., 'unique_index_solutions': ...}, ...}
-    all_bayesian_data = {}
-    for task, logger in zip(tasks, train_history_loggers):
-        all_bayesian_data[task.task_name] = {
-            'samples': logger.get_samples(),
-            'unique_solutions': logger.get_unique_solutions(),
-            'unique_index_solutions': logger.get_unique_index_solutions(),
-        }
+    # all_bayesian_data = {}
+    # for task, logger in zip(tasks, train_history_loggers):
+    #     all_bayesian_data[task.task_name] = {
+    #         'samples': logger.get_samples(),
+    #         'unique_solutions': logger.get_unique_solutions(),
+    #         'unique_index_solutions': logger.get_unique_index_solutions(),
+    #     }
 
-    with open(f'{dir_path}/bayesian_data.pkl', 'wb') as f:
-        pickle.dump(all_bayesian_data, f)
+    # with open(f'{dir_path}/bayesian_data.pkl', 'wb') as f:
+    #     pickle.dump(all_bayesian_data, f)
