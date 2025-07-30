@@ -1,4 +1,5 @@
 import time
+import os
 
 import numpy as np
 import torch
@@ -8,6 +9,7 @@ import preprocessing
 import arc_compressor_batch as arc_compressor
 import solution_selection_batch as solution_selection
 from async_memory_manager import AsyncMemoryManager, optimizer_to
+from checkpoint_utils import save_checkpoint, load_checkpoint, create_checkpoint_dir
 
 from utils_batch import compute_grid_size_log_partition, compute_grid_logprob
 
@@ -25,8 +27,10 @@ def get_optimal_batch_size(task):
         return 16
     elif grid_size < 10000:
         return 8
-    else:
+    elif grid_size < 20000:
         return 4
+    else:
+        return 2
 
 
 def take_step(task, model, optimizer_task, optimizer_shared, train_step, track_last=True):
@@ -102,6 +106,9 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step, track_l
     return scalar_loss.item(), test_reconstruction_error.item()
 
 
+
+
+
 if __name__ == "__main__":
     start_time = time.time()
     ######################## hyperparameters for training ##################################
@@ -111,6 +118,10 @@ if __name__ == "__main__":
     # burn_in = 100
     # track_freq = 10
     n_epochs = 2
+    
+    # Checkpoint options
+    resume_from_checkpoint = None  # Set to checkpoint path to resume training
+    continue_training = True  # If True, save everything needed to continue training (shared + task params/optimizers)
     ########################################################################################
 
     # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
@@ -137,19 +148,16 @@ if __name__ == "__main__":
         task_opt = torch.optim.Adam(model.task_params, lr=0.01, betas=(0.5, 0.9))
         task_optimizers.append(task_opt)
 
-        # visualization.plot_problem(train_history_logger)
-        # train_history_loggers.append(train_history_logger)
-
-    task_stats = []
-
-    # Get the solution hashes so that we can check for correctness
-    true_solution_hashes = [task.solution_hash for task in tasks]
+    # load checkpoint to continue training
+    start_epoch = 0
+    if resume_from_checkpoint and os.path.exists(resume_from_checkpoint):
+        start_epoch = load_checkpoint(resume_from_checkpoint, models, shared_optimizer, task_optimizers, continue_training=continue_training)
     
     # Initialize async memory manager
     memory_mgr = AsyncMemoryManager()
     
     try:
-        for epoch in range(n_epochs):
+        for epoch in range(start_epoch, start_epoch+n_epochs):
             order = list(range(len(tasks)))
             np.random.shuffle(order)
             
@@ -198,24 +206,19 @@ if __name__ == "__main__":
             avg_loss = epoch_loss / len(tasks)
             avg_test = epoch_test_recon / len(tasks)
             print(f"Epoch {epoch+1}/{n_epochs} - avg_loss={avg_loss:.4f} avg_testRecon={avg_test:.4f}")
-    
+            
     finally:
         memory_mgr.shutdown()
-
-    import os
+    
     import datetime
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     dir_path = f"run_results/{timestamp}"
     os.makedirs(dir_path, exist_ok=True)
-
-    # Save shared weights
-    torch.save(models[0].shared_params, os.path.join(dir_path, 'shared_weights.pt'))
-
-    # Save task-specific weights
-    for i, model in enumerate(models):
-        task_id = tasks[i].task_name
-        task_specific_weights_path = os.path.join(dir_path, f"task_{task_id}_weights.pt")
-        torch.save(model.task_params, task_specific_weights_path)
+    
+    # save final checkpoint
+    checkpoint_path = os.path.join(dir_path, "checkpoint")
+    os.makedirs(checkpoint_path, exist_ok=True)
+    save_checkpoint(models, shared_optimizer, task_optimizers, epoch, checkpoint_path, continue_training=continue_training)
 
     # Save training summary
     end_time = time.time()
