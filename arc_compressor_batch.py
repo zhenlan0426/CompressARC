@@ -58,6 +58,9 @@ class ARCCompressor:
             self.multiposteriors = task_model.multiposteriors
             self.target_capacities = task_model.target_capacities
             self.task_params = task_model.task_params
+        # Pin task-specific parameters if we are on CPU so later GPU copies use faster pinned memory
+        if device == 'cpu':
+            self.pin_task_params()
         
         if shared_model is None:
             # shared weights
@@ -122,28 +125,35 @@ class ARCCompressor:
     # ------------------------------------------------------------------
     # Utility helpers for device management of task-specific params
     # ------------------------------------------------------------------
-    def _move_task_params(self, device):
+    def _move_task_params(self, device, non_blocking=False):
         """Move only the task-specific parameters (multiposteriors & capacities)"""
         for p in self.task_params:
-            p.data = p.data.to(device)
+            p.data = p.data.to(device, non_blocking=non_blocking)
             if p.grad is not None:
-                p.grad = p.grad.to(device)
+                p.grad = p.grad.to(device, non_blocking=non_blocking)
 
-    def to_task_cpu(self):
-        self._move_task_params("cpu")
+    def to_task_cpu(self, non_blocking=False):
+        self._move_task_params("cpu", non_blocking=non_blocking)
 
-    def to_task_cuda(self):
-        self._move_task_params("cuda")
+    def to_task_cuda(self, non_blocking=False):
+        self._move_task_params("cuda", non_blocking=non_blocking)
 
-    # ------------------------------------------------------------------
+        # ------------------------------------------------------------------
     # Utility helpers for device management of shared params
+
+    def pin_task_params(self):
+        """Pin CPU memory for all task-specific parameters to accelerate host->GPU DMA."""
+        for p in self.task_params:
+            if p.data.device.type == "cpu":
+                p.data = p.data.pin_memory()
+
     # ------------------------------------------------------------------
-    def _move_shared_params(self, device):
+    def _move_shared_params(self, device, non_blocking=False):
         """Move only the shared parameters"""
         for p in self.shared_params:
-            p.data = p.data.to(device)
+            p.data = p.data.to(device, non_blocking=non_blocking)
             if p.grad is not None:
-                p.grad = p.grad.to(device)
+                p.grad = p.grad.to(device, non_blocking=non_blocking)
 
     def to_shared_cpu(self):
         self._move_shared_params("cpu")
