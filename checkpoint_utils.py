@@ -37,7 +37,7 @@ def load_checkpoint(checkpoint_path, models, shared_optimizer, task_optimizers=N
     Load model and optimizer states to continue training
     
     Args:
-        checkpoint_path: Path to the checkpoint file
+        checkpoint_path: Path to the checkpoint file or loaded checkpoint dictionary
         models: List of ARCCompressor models
         shared_optimizer: Optimizer for shared parameters
         task_optimizers: List of optimizers for task-specific parameters (optional if continue_training checkpoint)
@@ -45,11 +45,16 @@ def load_checkpoint(checkpoint_path, models, shared_optimizer, task_optimizers=N
     Returns:
         start_epoch: The epoch to start training from
     """
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    if isinstance(checkpoint_path, str):
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    else:
+        checkpoint = checkpoint_path
+        
     start_epoch = checkpoint['epoch'] + 1
     
     # Load shared parameters
-    for p, saved in zip(models[0].shared_params, checkpoint['shared_params']):
+    for p, saved in zip(models[0].shared_params if isinstance(models, list) else models.shared_params, \
+                        checkpoint['shared_params']):
         p.data.copy_(saved.to(p.device, dtype=p.dtype))
     
     if continue_training:

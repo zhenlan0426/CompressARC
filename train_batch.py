@@ -11,7 +11,7 @@ import solution_selection_batch as solution_selection
 import solution_selection_batch as solution_selection
 
 from utils_batch import compute_grid_size_log_partition, compute_grid_logprob
-
+from checkpoint_utils import load_checkpoint
 """
 This file trains a model for every ARC-AGI task in a split.
 """
@@ -31,7 +31,7 @@ def get_optimal_batch_size(task):
     else:
         return 2
 
-def take_step(task, model, optimizer, train_step, train_history_logger: solution_selection.Logger, track_last=False):
+def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_history_logger: solution_selection.Logger, track_last=False):
     """
     Runs a forward pass of the model on the ARC-AGI task.
     Args:
@@ -43,7 +43,8 @@ def take_step(task, model, optimizer, train_step, train_history_logger: solution
                 of the model, as well as accuracy and other things.
     """
     # TODO: revisit coefficient schedule for amortization / grid size uncertainty
-    optimizer.zero_grad()
+    optimizer_task.zero_grad()
+    optimizer_shared.zero_grad()
     logits, x_mask, y_mask, KL_amounts, KL_names, = model.forward()
     # Shape now: (B, E, C, X, Y, in_out)
     # Pre-append a zero-logit channel for the black colour along the colour dimension (dim=2)
@@ -96,8 +97,10 @@ def take_step(task, model, optimizer, train_step, train_history_logger: solution
     reconstruction_error = reconstruction_error_per_sample.mean()
     scalar_loss = total_KL + 10 * reconstruction_error
     scalar_loss.backward()
-    optimizer.step()
-    optimizer.zero_grad()
+    optimizer_task.step()
+    optimizer_shared.step()
+    optimizer_task.zero_grad()
+    optimizer_shared.zero_grad()
 
     # Performance recording
     train_history_logger.log(train_step,
@@ -121,37 +124,34 @@ if __name__ == "__main__":
     burn_in = 100
     track_freq = 10
     n_iterations = 500
+    lr = 0.01
+    shared_lr_factor = 0.1
+    checkpoint = "run_results/2025-07-30_15-00-00/checkpoint.pt"
     ########################################################################################
 
-    # Preprocess all tasks, make models, optimizers, and loggers. Make plots.
+    # Preprocess all tasks
     tasks = preprocessing.preprocess_tasks(split, task_nums)
     if only_same_size_tasks:
         tasks = [task for task in tasks if task.in_out_same_size or task.all_out_same_size]
-    models = []
-    optimizers = []
-    train_history_loggers = []
-    for task in tasks:
-        batch_size = get_optimal_batch_size(task)
-        model = arc_compressor.ARCCompressor(task, batch_size)
-        models.append(model)
-        optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
-        optimizers.append(optimizer)
-
-        train_history_logger = solution_selection.Logger(task)
-        # visualization.plot_problem(train_history_logger)
-        train_history_loggers.append(train_history_logger)
 
     task_stats = []
 
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
+    checkpoint = torch.load(checkpoint, map_location='cpu')
+    # Train the models one by one, creating them on the fly
+    for i, task in enumerate(tasks):        
+        # Create model, optimizer, and logger for this task
+        batch_size = get_optimal_batch_size(task)
+        model = arc_compressor.ARCCompressor(task, batch_size, device='cuda')
+        optimizer_task = torch.optim.Adam(model.task_params, lr=lr, betas=(0.5, 0.9))
+        optimizer_shared = torch.optim.Adam(model.shared_params, lr=lr*shared_lr_factor, betas=(0.5, 0.9))
+        train_history_logger = solution_selection.Logger(task)
+        load_checkpoint(checkpoint, model, None, None, continue_training=False)
 
-    # Train the models one by one
-    for i, (task, model, optimizer, train_history_logger) in enumerate(zip(tasks, models, optimizers, train_history_loggers)):
         task_start_time = time.time()
-
         for train_step in range(n_iterations):
-            take_step(task, model, optimizer, train_step, train_history_logger)
+            take_step(task, model, optimizer_task, optimizer_shared, train_step, train_history_logger)
 
         time_spent = time.time() - task_start_time
 
@@ -163,11 +163,6 @@ if __name__ == "__main__":
         stats['n_iterations'] = n_iterations
         task_stats.append(stats)
 
-        # solution_selection.save_predictions(train_history_loggers[:i+1])
-        # solution_selection.plot_accuracy(true_solution_hashes)
-
-    # Save final states for all tasks
-    # solution_selection.save_final_states(train_history_loggers, 'final_states.npz')
 
     import os
     import datetime
