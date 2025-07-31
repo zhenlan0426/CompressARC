@@ -64,7 +64,7 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step):
     # ------------------------------------------------------------
     # Fully vectorised pre-computation over examples *and* in/out modes.
     # ------------------------------------------------------------
-    small_coeff = 0.01 ** max(0, 1 - train_step / 100)
+    small_coeff = 1.0
 
     # Bring the length dimension to the end so the helper treats everything
     # before it as vectorisable.
@@ -74,7 +74,7 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step):
     for example_num in range(task.n_examples):  # sum over examples
         for in_out_mode in range(2):  # sum over in/out grid per example
             grid_size_uncertain = not (task.in_out_same_size or task.all_out_same_size and in_out_mode==1 or task.all_in_same_size and in_out_mode==0)
-            coeff_mask = 0.01 ** max(0, 1 - train_step / 100) if grid_size_uncertain else 1.0
+            coeff_mask = 1.0
 
             logits_slice = logits[:, example_num, :, :, :, in_out_mode]  # (B, C, x, y)
             problem_slice = task.problem[example_num, :, :, in_out_mode]  # (x, y)
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
     # burn_in = 100
     # track_freq = 10
-    n_epochs = 20
+    n_epochs = 10
     
     # Checkpoint options
     resume_from_checkpoint = None  # Set to checkpoint path to resume training
@@ -132,14 +132,14 @@ if __name__ == "__main__":
             # First task – create brand-new weights on GPU initially
             model = arc_compressor.ARCCompressor(task, batch_size, device='cuda')
             # Shared optimiser – only ever created once, keeps reference to shared_params
-            shared_optimizer = torch.optim.Adam(model.shared_params, lr=0.01, betas=(0.5, 0.9))
+            shared_optimizer = torch.optim.Adam(model.shared_params, lr=0.007)
             
         else:
             # Subsequent tasks – reuse shared weights from the first model, init on CPU
             model = arc_compressor.ARCCompressor(task, batch_size, shared_model=models[0], device='cpu')        
         models.append(model)
         # Optimiser dedicated to task-specific latents (starts on CPU)
-        task_opt = torch.optim.Adam(model.task_params, lr=0.01, betas=(0.5, 0.9))
+        task_opt = torch.optim.Adam(model.task_params, lr=0.007)
         task_optimizers.append(task_opt)
 
     # load checkpoint to continue training

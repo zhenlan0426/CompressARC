@@ -20,6 +20,11 @@ class Logger:
         self.loss_curve = []
         self.test_reconstruction_error_curve = []
 
+        # New tracking for scalar loss, test reconstruction error, and total KL
+        self.scalar_loss_curve = []
+        self.test_recon_error_curve = []
+        self.total_kl_curve = []
+
         self.ema_logits = None
         self.ema_x_mask = None
         self.ema_y_mask = None
@@ -31,24 +36,13 @@ class Logger:
         self.solution_contributions_log = []
         self.solution_picks_history = []
 
-    def log(self, train_step, logits, x_mask, y_mask, KL_amounts, KL_names, total_KL, reconstruction_error, loss, test_reconstruction_error=None):
+    def log(self, train_step, logits, x_mask, y_mask, KL_amounts, KL_names, total_KL, reconstruction_error, loss, test_reconstruction_error):
         """Logs training progress and tracks solutions from one forward pass."""
-        if train_step == 0:
-            self.KL_curves = {KL_name: [] for KL_name in KL_names}
-
-        for KL_amount, KL_name in zip(KL_amounts, KL_names):
-            kl_sum_per_batch = torch.sum(KL_amount.detach(), dim=tuple(range(1, KL_amount.dim())))
-            avg_kl = torch.mean(kl_sum_per_batch).item()
-            self.KL_curves[KL_name].append(avg_kl)
-
-        B = logits.shape[0]
-        self.total_KL_curve.append((total_KL.detach() / B).item())
-
-        self.reconstruction_error_curve.append((reconstruction_error.detach() / B).item())
-        self.loss_curve.append((loss.detach() / B).item())
-        if test_reconstruction_error is not None:
-            self.test_reconstruction_error_curve.append((test_reconstruction_error.detach() / B).item())
-
+        # Track scalar loss, test reconstruction error, and total KL
+        self.scalar_loss_curve.append(loss.item())
+        self.test_recon_error_curve.append(test_reconstruction_error.item())
+        self.total_kl_curve.append(total_KL.item())
+            
         self._track_solution(train_step, logits.detach(), x_mask.detach(), y_mask.detach())
 
     def _track_solution(self, train_step, logits, x_mask, y_mask):
@@ -168,11 +162,10 @@ class Logger:
     def compute_stats(self):
         import numpy as np
 
-        avg_total_loss = np.mean([r + k for r, k in zip(self.reconstruction_error_curve, self.total_KL_curve)])
-
-        last_total_loss = self.reconstruction_error_curve[-1] + self.total_KL_curve[-1]
-
-        last_test_recon = self.test_reconstruction_error_curve[-1]
+        # Use the new scalar loss and test reconstruction error curves
+        avg_total_loss = np.mean(self.scalar_loss_curve) if len(self.scalar_loss_curve) > 0 else 0.0
+        last_total_loss = self.scalar_loss_curve[-1] if len(self.scalar_loss_curve) > 0 else 0.0
+        last_test_recon = self.test_recon_error_curve[-1] if len(self.test_recon_error_curve) > 0 else 0.0
 
         is_shape_fixed = self.task.in_out_same_size or self.task.all_out_same_size
 
@@ -221,6 +214,18 @@ class Logger:
             'top1_match_pct': top1_match_pct,
             'top2_match_pct': top2_match_pct,
         }
+
+    def get_scalar_loss_curve(self):
+        """Returns the scalar loss curve as a numpy array."""
+        return np.array(self.scalar_loss_curve)
+    
+    def get_test_recon_error_curve(self):
+        """Returns the test reconstruction error curve as a numpy array."""
+        return np.array(self.test_recon_error_curve)
+    
+    def get_total_kl_curve(self):
+        """Returns the total KL curve as a numpy array."""
+        return np.array(self.total_kl_curve)
 
 
 def save_predictions(loggers, fname='predictions.npz'):

@@ -111,7 +111,6 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_h
                              scalar_loss,
                              test_reconstruction_error)
 
-
 if __name__ == "__main__":
     start_time = time.time()
     ######################## hyperparameters for training ##################################
@@ -130,7 +129,8 @@ if __name__ == "__main__":
         tasks = [task for task in tasks if task.in_out_same_size or task.all_out_same_size]
 
     task_stats = []
-
+    loggers = []  # Store loggers to collect matrices later
+    
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
     checkpoint = torch.load(checkpoint, map_location='cuda')
@@ -157,6 +157,7 @@ if __name__ == "__main__":
         stats['time_spent'] = time_spent
         stats['n_iterations'] = n_iterations
         task_stats.append(stats)
+        loggers.append(train_history_logger)  # Store logger for matrix collection
 
 
     import os
@@ -173,6 +174,17 @@ if __name__ == "__main__":
         writer = csv.DictWriter(f, fieldnames=keys)
         writer.writeheader()
         writer.writerows(task_stats)
+    
+    # Collect loss matrices from loggers
+    scalar_loss_matrix = np.array([logger.get_scalar_loss_curve() for logger in loggers])
+    test_reconstruction_error_matrix = np.array([logger.get_test_recon_error_curve() for logger in loggers])
+    total_kl_matrix = np.array([logger.get_total_kl_curve() for logger in loggers])
+    
+    # Save loss matrices as CSV files
+    np.savetxt(f'{dir_path}/scalar_loss_matrix.csv', scalar_loss_matrix, delimiter=',', fmt='%.6f')
+    np.savetxt(f'{dir_path}/test_reconstruction_error_matrix.csv', test_reconstruction_error_matrix, delimiter=',', fmt='%.6f')
+    np.savetxt(f'{dir_path}/total_kl_matrix.csv', total_kl_matrix, delimiter=',', fmt='%.6f')
+
 
     # Write down how long it all took
     with open(f'{dir_path}/timing_result.txt', 'w') as f:
