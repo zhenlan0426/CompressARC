@@ -18,7 +18,7 @@ def save_checkpoint(models, shared_optimizer, task_optimizers, epoch, checkpoint
         'epoch': epoch,
         'shared_params': [p.detach().cpu() for p in models[0].shared_params],
     }
-    
+    torch.save(checkpoint, checkpoint_path.replace("checkpoint", 'shared_params'))
     if continue_training:
         checkpoint['shared_optimizer_state'] = shared_optimizer.state_dict()
         # Save task-specific parameters and optimizer states
@@ -30,7 +30,6 @@ def save_checkpoint(models, shared_optimizer, task_optimizers, epoch, checkpoint
             checkpoint['task_models'][task_name] = [p.detach().cpu() for p in model.task_params]
             checkpoint['task_optimizers'][task_name] = task_opt.state_dict()    
     torch.save(checkpoint, checkpoint_path)
-    print(f"Checkpoint saved to {checkpoint_path}")
 
 def load_checkpoint(checkpoint_path, models, shared_optimizer, task_optimizers=None, continue_training=False):
     """
@@ -69,5 +68,4 @@ def load_checkpoint(checkpoint_path, models, shared_optimizer, task_optimizers=N
             # Load task optimizer state
             task_opt.load_state_dict(checkpoint['task_optimizers'][task_name])
     
-    print(f"Checkpoint loaded from {checkpoint_path}, resuming from epoch {start_epoch}")
     return start_epoch

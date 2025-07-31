@@ -31,7 +31,7 @@ def get_optimal_batch_size(task):
     else:
         return 2
 
-def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_history_logger: solution_selection.Logger, track_last=False):
+def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_history_logger: solution_selection.Logger):
     """
     Runs a forward pass of the model on the ARC-AGI task.
     Args:
@@ -71,10 +71,6 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_h
 
     for example_num in range(task.n_examples):  # sum over examples
         for in_out_mode in range(2):  # sum over in/out grid per example
-            if example_num >= task.n_train and in_out_mode == 1:
-                if not track_last:
-                    continue
-
             grid_size_uncertain = not (task.in_out_same_size or task.all_out_same_size and in_out_mode==1 or task.all_in_same_size and in_out_mode==0)
             coeff_mask = 0.01 ** max(0, 1 - train_step / 100) if grid_size_uncertain else 1.0
 
@@ -86,12 +82,13 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_h
 
             precomp_x = x_grid_log_partitions[:, example_num, in_out_mode]
             precomp_y = y_grid_log_partitions[:, example_num, in_out_mode]
-
-            logprob = compute_grid_logprob(logits_slice, problem_slice, x_mask_slice, y_mask_slice, grid_size_uncertain, coeff_mask, coeff_mask, precomp_x, precomp_y)
-
-            if example_num >= task.n_train and in_out_mode == 1:
-                test_reconstruction_error -= logprob.sum()
+                        
+            if example_num >= task.n_train and in_out_mode == 1: # test set no backward pass
+                with torch.no_grad():
+                    logprob = compute_grid_logprob(logits_slice, problem_slice, x_mask_slice, y_mask_slice, grid_size_uncertain, coeff_mask, coeff_mask, precomp_x, precomp_y)
+                    test_reconstruction_error -= logprob.sum()
             else:
+                logprob = compute_grid_logprob(logits_slice, problem_slice, x_mask_slice, y_mask_slice, grid_size_uncertain, coeff_mask, coeff_mask, precomp_x, precomp_y)
                 reconstruction_error_per_sample = reconstruction_error_per_sample - logprob
 
     reconstruction_error = reconstruction_error_per_sample.mean()
@@ -112,7 +109,7 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_h
                              total_KL,
                              reconstruction_error,
                              scalar_loss,
-                             test_reconstruction_error if track_last else None)
+                             test_reconstruction_error)
 
 
 if __name__ == "__main__":
@@ -121,12 +118,10 @@ if __name__ == "__main__":
     task_nums = list(range(1000))
     split = "evaluation"  # "training", "evaluation, or "test"
     only_same_size_tasks = False  # Set to True to only run for tasks where task.in_out_same_size or task.all_out_same_size
-    burn_in = 100
-    track_freq = 10
     n_iterations = 500
     lr = 0.01
     shared_lr_factor = 0.1
-    checkpoint = "run_results/2025-07-30_15-00-00/checkpoint.pt"
+    checkpoint = "run_results/2025-07-30_16-14-19/shared_params"
     ########################################################################################
 
     # Preprocess all tasks
@@ -138,7 +133,7 @@ if __name__ == "__main__":
 
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
-    checkpoint = torch.load(checkpoint, map_location='cpu')
+    checkpoint = torch.load(checkpoint, map_location='cuda')
     # Train the models one by one, creating them on the fly
     for i, task in enumerate(tasks):        
         # Create model, optimizer, and logger for this task
