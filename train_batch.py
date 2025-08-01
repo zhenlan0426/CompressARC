@@ -12,6 +12,7 @@ import solution_selection_batch as solution_selection
 
 from utils_batch import compute_grid_size_log_partition, compute_grid_logprob
 from checkpoint_utils import load_checkpoint
+from experiment_utils import save_top_level_py_files
 """
 This file trains a model for every ARC-AGI task in a split.
 """
@@ -133,7 +134,7 @@ if __name__ == "__main__":
     
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
-    checkpoint = torch.load(checkpoint, map_location='cuda')
+    # checkpoint = torch.load(checkpoint, map_location='cuda')
     # Train the models one by one, creating them on the fly
     for i, task in enumerate(tasks):        
         # Create model, optimizer, and logger for this task
@@ -142,7 +143,7 @@ if __name__ == "__main__":
         optimizer_task = torch.optim.Adam(model.task_params, lr=lr, betas=(0.5, 0.9))
         optimizer_shared = torch.optim.Adam(model.shared_params, lr=lr*shared_lr_factor, betas=(0.5, 0.9))
         train_history_logger = solution_selection.Logger(task)
-        load_checkpoint(checkpoint, model, None, None, continue_training=False)
+        # load_checkpoint(checkpoint, model, None, None, continue_training=False)
 
         task_start_time = time.time()
         for train_step in range(n_iterations):
@@ -184,6 +185,9 @@ if __name__ == "__main__":
     np.savetxt(f'{dir_path}/scalar_loss_matrix.csv', scalar_loss_matrix, delimiter=',', fmt='%.6f')
     np.savetxt(f'{dir_path}/test_reconstruction_error_matrix.csv', test_reconstruction_error_matrix, delimiter=',', fmt='%.6f')
     np.savetxt(f'{dir_path}/total_kl_matrix.csv', total_kl_matrix, delimiter=',', fmt='%.6f')
+
+    # Save top-level .py files
+    save_top_level_py_files(dir_path)
 
 
     # Write down how long it all took
