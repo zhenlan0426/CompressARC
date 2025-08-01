@@ -111,6 +111,32 @@ def take_step(task, model, optimizer_task, optimizer_shared, train_step, train_h
                              reconstruction_error,
                              scalar_loss,
                              test_reconstruction_error)
+    
+def repeat_tensor_on_new_axis(tensor, repeat_count, axis=0):
+    # Unsqueeze the tensor to add a new axis
+    tensor_unsqueezed = tensor.unsqueeze(axis)
+    
+    # Create a repeat pattern with 1s for all dimensions except the new axis
+    repeat_pattern = [1] * tensor_unsqueezed.ndim
+    repeat_pattern[axis] = repeat_count
+    
+    # Repeat the tensor along the new axis
+    tensor_repeated = tensor_unsqueezed.repeat(*repeat_pattern)
+    return tensor_repeated
+
+def create_repeat_checkpoint(checkpoint):
+    repeated_checkpoint = {}
+    for repeat_count in [2, 4, 8, 16]:
+        repeated_checkpoint[repeat_count] = {}
+        for key, value in checkpoint.items():
+            if isinstance(value, list):
+                # Repeat the tensor along a new axis
+                repeated_value = [repeat_tensor_on_new_axis(v, repeat_count) for v in value]
+                repeated_checkpoint[repeat_count][key] = repeated_value
+            else:
+                # For non-tensor values, just copy them
+                repeated_checkpoint[repeat_count][key] = value
+    return repeated_checkpoint
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -121,6 +147,7 @@ if __name__ == "__main__":
     n_iterations = 500
     lr = 0.01
     shared_lr_factor = 0.1
+    weight_repeat = True  # If True, the shared weights are repeated along a new axis for each task
     checkpoint = "run_results/2025-07-30_16-14-19/shared_params"
     ########################################################################################
 
@@ -134,16 +161,18 @@ if __name__ == "__main__":
     
     # Get the solution hashes so that we can check for correctness
     true_solution_hashes = [task.solution_hash for task in tasks]
-    # checkpoint = torch.load(checkpoint, map_location='cuda')
+    checkpoint = torch.load(checkpoint, map_location='cuda')
+    if weight_repeat:
+        repeat_checkpoint = create_repeat_checkpoint(checkpoint)
     # Train the models one by one, creating them on the fly
     for i, task in enumerate(tasks):        
         # Create model, optimizer, and logger for this task
         batch_size = get_optimal_batch_size(task)
-        model = arc_compressor.ARCCompressor(task, batch_size, device='cuda')
+        model = arc_compressor.ARCCompressor(task, batch_size, device='cuda', batch_for_weights=weight_repeat)
         optimizer_task = torch.optim.Adam(model.task_params, lr=lr, betas=(0.5, 0.9))
         optimizer_shared = torch.optim.Adam(model.shared_params, lr=lr*shared_lr_factor, betas=(0.5, 0.9))
         train_history_logger = solution_selection.Logger(task)
-        # load_checkpoint(checkpoint, model, None, None, continue_training=False)
+        load_checkpoint(repeat_checkpoint[batch_size] if weight_repeat else checkpoint, model, None, None, continue_training=False)
 
         task_start_time = time.time()
         for train_step in range(n_iterations):

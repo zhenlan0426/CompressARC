@@ -31,7 +31,7 @@ class ARCCompressor:
     def channel_dim_fn(self, dims):
         return 16 if dims[2] == 0 else 8
 
-    def __init__(self, task, batch_size=8, shared_model=None, task_model=None, device='cpu'):
+    def __init__(self, task, batch_size=8, shared_model=None, task_model=None, device='cpu', batch_for_weights=False):
         """
         Create a model that is tailored to the given task, and initialize all the weights.
         The weights are symmetrized such that swapping the x and y dimension ordering should
@@ -64,7 +64,7 @@ class ARCCompressor:
         
         if shared_model is None:
             # shared weights
-            initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, False)
+            initializer = initializers_batch.Initializer(self.multitensor_system, self.channel_dim_fn, batch_size, batch_for_weights)
             self.decode_weights = initializer.initialize_multilinear([self.decoding_dim, self.channel_dim_fn])
             initializer.symmetrize_xy(self.decode_weights)
             
